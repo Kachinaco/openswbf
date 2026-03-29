@@ -49,24 +49,25 @@ struct TerrainData {
 // ---------------------------------------------------------------------------
 // TerrainLoader — parses tern UCFB chunks into TerrainData.
 //
-// tern chunk structure (observed):
+// SWBF2 tern chunk structure (observed from nab2.lvl):
 //
 //   tern
-//     INFO — terrain header: u32 grid_size, f32 grid_scale, f32 height_scale,
-//            u32 grid_size_plus_1, etc.
+//     NAME — terrain name
+//     INFO (28 bytes) — grid_scale, height_scale, unknowns, patches_per_axis
 //     PCHS — patch set container
-//       PTCH — individual terrain patch
-//         INFO — patch header (grid coords, LOD info)
-//         VBUF — vertex buffer
-//         IBUF — index buffer
+//       COMN — common index buffer (shared)
+//       PTCH (repeated) — individual terrain patch
+//         INFO — patch metadata (LOD flags)
+//         VBUF (stride=16, flags=0x5122) — texture/blend data
+//         VBUF (stride=28, flags=0x122)  — geometry: pos + normal + color
+//       LOWR — lower LOD (optional)
 //     LTEX — texture layer name (one per layer, in order)
 //     DTLX — detail texture info
 //     DTEX — diffuse texture info
 //
-// VBUF type 290 contains per-vertex data:
-//   vec3 position, vec3 normal, u32 color  (28 bytes per vertex)
-//
-// We extract heights from vertex positions and vertex colors directly.
+// Patches are 9x9 vertices (8x8 cells) with local coordinates.
+// They are stored sequentially in row-major order across a
+// patches_per_axis x patches_per_axis grid.
 // ---------------------------------------------------------------------------
 
 class TerrainLoader {
@@ -77,9 +78,6 @@ public:
     TerrainData load(ChunkReader& chunk);
 
 private:
-    // Parse a VBUF (vertex buffer) chunk and populate height/color data.
-    void parse_vbuf(ChunkReader& vbuf, TerrainData& terrain);
-
     // Parse an LTEX chunk to extract a texture layer name.
     std::string parse_ltex(ChunkReader& ltex);
 };

@@ -21,145 +21,18 @@ constexpr FourCC INFO = make_fourcc('I', 'N', 'F', 'O');
 constexpr FourCC PCHS = make_fourcc('P', 'C', 'H', 'S');
 constexpr FourCC PTCH = make_fourcc('P', 'T', 'C', 'H');
 constexpr FourCC VBUF = make_fourcc('V', 'B', 'U', 'F');
-// IBUF is not currently used — index buffers are skipped during terrain loading.
-// constexpr FourCC IBUF = make_fourcc('I', 'B', 'U', 'F');
 constexpr FourCC LTEX = make_fourcc('L', 'T', 'E', 'X');
 constexpr FourCC DTLX = make_fourcc('D', 'T', 'L', 'X');
 constexpr FourCC DTEX = make_fourcc('D', 'T', 'E', 'X');
 constexpr FourCC NAME = make_fourcc('N', 'A', 'M', 'E');
 
-// VBUF element types that we recognize.
-// Type 290 (0x122) = position(vec3) + normal(vec3) + color(u32) = 28 bytes/vertex
-// Type 34  (0x022) = position(vec3) + normal(vec3) = 24 bytes/vertex
-// Type 2   (0x002) = position(vec3) = 12 bytes/vertex
-constexpr uint32_t VBUF_TYPE_POS_NRM_CLR = 290;  // 0x122
-constexpr uint32_t VBUF_TYPE_POS_NRM     = 34;   // 0x022
-// VBUF_TYPE_POS is reserved for future use when position-only vertices are handled.
-// constexpr uint32_t VBUF_TYPE_POS       = 2;     // 0x002
+// VBUF flags for the geometry buffer (position + normal + color).
+constexpr uint32_t VBUF_FLAGS_GEOMETRY = 0x122;
+
+// Cells per patch side (each patch is a 9x9 vertex grid = 8x8 cells).
+constexpr uint32_t CELLS_PER_PATCH = 8;
 
 } // anonymous namespace
-
-// ---------------------------------------------------------------------------
-// parse_vbuf — extract height and color data from a terrain vertex buffer
-//
-// VBUF chunk layout:
-//   u32 vertex_count
-//   u32 stride (bytes per vertex)
-//   u32 type_flags
-//   [vertex data: vertex_count * stride bytes]
-//
-// For type 290 (the most common terrain VBUF), each vertex is:
-//   float pos_x, pos_y, pos_z   (12 bytes)
-//   float nrm_x, nrm_y, nrm_z  (12 bytes)
-//   u32   color                  ( 4 bytes)
-//   Total: 28 bytes
-//
-// We extract pos_y as the height value and the packed color. The x/z
-// positions define the grid placement and are used to compute the vertex
-// index into the flat height/color arrays.
-// ---------------------------------------------------------------------------
-
-void TerrainLoader::parse_vbuf(ChunkReader& vbuf, TerrainData& terrain) {
-    if (vbuf.remaining() < 12) {
-        LOG_WARN("TerrainLoader: VBUF chunk too small (%zu bytes)", vbuf.remaining());
-        return;
-    }
-
-    uint32_t vertex_count = vbuf.read<uint32_t>();
-    uint32_t stride       = vbuf.read<uint32_t>();
-    uint32_t type_flags   = vbuf.read<uint32_t>();
-
-    if (vertex_count == 0 || stride == 0) {
-        return;
-    }
-
-    const std::size_t data_bytes = static_cast<std::size_t>(vertex_count) * stride;
-    if (vbuf.remaining() < data_bytes) {
-        LOG_WARN("TerrainLoader: VBUF declares %u vertices * %u stride = %zu bytes, "
-                 "but only %zu remaining",
-                 vertex_count, stride, data_bytes, vbuf.remaining());
-        return;
-    }
-
-    // Determine what fields are present based on type_flags.
-    // Position is always present (minimum 12 bytes per vertex).
-    bool has_normal = (type_flags == VBUF_TYPE_POS_NRM || type_flags == VBUF_TYPE_POS_NRM_CLR);
-    bool has_color  = (type_flags == VBUF_TYPE_POS_NRM_CLR);
-
-    // Minimum expected stride based on detected fields.
-    uint32_t expected_stride = 12;  // vec3 position
-    if (has_normal) expected_stride += 12;
-    if (has_color)  expected_stride += 4;
-
-    if (stride < expected_stride) {
-        // Unknown vertex format — try to handle gracefully.
-        // If stride is at least 12, we can still extract positions.
-        has_normal = (stride >= 24);
-        has_color  = (stride >= 28);
-    }
-
-    // If the terrain grid isn't sized yet, estimate from vertex count.
-    // Terrain patches contribute partial vertex data; we accumulate
-    // into the arrays and use grid_size to address them.
-    if (terrain.grid_size == 0) {
-        // Try to infer grid size: common sizes are powers of 2 plus 1
-        // (e.g. 129, 257, 513). If vertex_count is a perfect square
-        // of such a number, use it.
-        uint32_t side = static_cast<uint32_t>(std::sqrt(static_cast<double>(vertex_count)));
-        if (side * side == vertex_count) {
-            terrain.grid_size = side;
-            terrain.heights.resize(static_cast<std::size_t>(side) * side, 0.0f);
-            terrain.colors.resize(static_cast<std::size_t>(side) * side, 0xFFFFFFFF);
-        }
-    }
-
-    // Read vertices and populate height/color arrays.
-    for (uint32_t i = 0; i < vertex_count; ++i) {
-        // Read position (always present).
-        float px = vbuf.read<float>();
-        float py = vbuf.read<float>();
-        float pz = vbuf.read<float>();
-
-        // Read normal (if present).
-        if (has_normal) {
-            vbuf.skip(12); // skip normal vec3
-        }
-
-        // Read color (if present).
-        uint32_t color = 0xFFFFFFFF;
-        if (has_color) {
-            color = vbuf.read<uint32_t>();
-        }
-
-        // Skip any remaining bytes in this vertex's stride.
-        uint32_t consumed = 12;
-        if (has_normal) consumed += 12;
-        if (has_color)  consumed += 4;
-        if (stride > consumed) {
-            vbuf.skip(stride - consumed);
-        }
-
-        // Map world-space position to grid index.
-        // The terrain is centered at the origin, so grid coordinates are:
-        //   gx = (px / grid_scale) + grid_size/2
-        //   gz = (pz / grid_scale) + grid_size/2
-        if (terrain.grid_size > 0 && terrain.grid_scale > 0.0f) {
-            int gx = static_cast<int>(px / terrain.grid_scale + static_cast<float>(terrain.grid_size) * 0.5f + 0.5f);
-            int gz = static_cast<int>(pz / terrain.grid_scale + static_cast<float>(terrain.grid_size) * 0.5f + 0.5f);
-
-            if (gx >= 0 && gx < static_cast<int>(terrain.grid_size) &&
-                gz >= 0 && gz < static_cast<int>(terrain.grid_size)) {
-                std::size_t idx = static_cast<std::size_t>(gz) * terrain.grid_size + static_cast<std::size_t>(gx);
-                terrain.heights[idx] = py;
-                terrain.colors[idx]  = color;
-            }
-        } else if (i < terrain.heights.size()) {
-            // Fallback: store sequentially if we cannot compute grid coords.
-            terrain.heights[i] = py;
-            terrain.colors[i]  = color;
-        }
-    }
-}
 
 // ---------------------------------------------------------------------------
 // parse_ltex — extract a texture layer name from an LTEX chunk
@@ -173,26 +46,20 @@ std::string TerrainLoader::parse_ltex(ChunkReader& ltex) {
     // The LTEX chunk may contain child chunks or a direct string payload.
     // First, check if there is a NAME sub-chunk.
     if (ltex.remaining() >= 8) {
-        // Peek at the first 4 bytes to see if it looks like a FourCC.
-        // If the first child is a NAME chunk, read from that; otherwise
-        // treat the entire payload as a null-terminated string.
         try {
             ChunkReader child = ltex.next_child();
             if (child.id() == NAME) {
                 return child.read_string();
             }
-            // Not a NAME chunk — fall through to read as raw string.
         } catch (...) {
             // Not a valid sub-chunk — payload is a raw string.
         }
     }
 
     // Read the payload directly as a null-terminated string.
-    // Re-construct a reader to start from the beginning of the payload.
     const uint8_t* data = ltex.data();
     u32 size = ltex.size();
 
-    // Find null terminator.
     std::size_t len = 0;
     while (len < size && data[len] != '\0') {
         ++len;
@@ -203,21 +70,38 @@ std::string TerrainLoader::parse_ltex(ChunkReader& ltex) {
 // ---------------------------------------------------------------------------
 // load — main entry point: parse a tern chunk
 //
-// The tern chunk hierarchy:
+// SWBF2 tern chunk hierarchy (observed from nab2.lvl):
 //
 //   tern
-//     INFO  — header with grid dimensions and scale factors
-//     PCHS  — patch set (container)
-//       PTCH  — individual terrain patch
-//         INFO  — patch position, LOD info
-//         VBUF  — vertex buffer for this patch
-//         IBUF  — index buffer for this patch (triangle list/strip)
-//     LTEX  — texture layer name (repeated, one per layer)
-//     DTLX  — detail texture info (optional)
-//     DTEX  — diffuse texture info (optional)
+//     NAME (7 bytes) — terrain name
+//     INFO (28 bytes) — header:
+//       offset  0: float grid_scale    (e.g. 4.0 — meters per cell)
+//       offset  4: float height_scale  (e.g. 0.06 — vertical multiplier)
+//       offset  8: float unknown       (e.g. 1.5)
+//       offset 12: float unknown       (e.g. 7.86 — default height?)
+//       offset 16: uint32 grid_info    (e.g. 0x80080)
+//       offset 20: uint32 patch_info   (e.g. 0x10010)
+//       offset 24: uint32 patches_per_axis (e.g. 16)
+//     LTEX — texture layer name
+//     DTEX / DTLX — texture blend info
+//     PCHS — patch set container:
+//       COMN — common/default index buffer (shared by all patches)
+//       PTCH (repeated, patches_per_axis^2 times) — terrain patches:
+//         INFO (8 bytes) — patch metadata (LOD flags, not grid position)
+//         VBUF (stride=16, flags=0x5122) — texture/blend vertex data
+//         VBUF (stride=28, flags=0x122)  — geometry vertex data:
+//           81 vertices (9x9 grid), each: vec3 pos + vec3 normal + u32 color
+//       LOWR — lower LOD data (optional, skipped)
 //
-// We combine all patches' VBUF data into a single flat heightmap and color
-// array. Texture layer names are collected from LTEX children.
+// Patches are stored sequentially in row-major order. Each patch covers
+// an 8x8 cell region with 9x9 vertices. Vertex positions are LOCAL to
+// the patch (x,z in [0..32] for grid_scale=4). The patch's grid position
+// is derived from its sequential index:
+//   patch_x = index % patches_per_axis
+//   patch_z = index / patches_per_axis
+//
+// The full terrain grid is (patches_per_axis * 8 + 1) vertices per side.
+// Adjacent patches share edge vertices.
 // ---------------------------------------------------------------------------
 
 TerrainData TerrainLoader::load(ChunkReader& chunk) {
@@ -228,96 +112,142 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
         return terrain;
     }
 
-    // First pass: walk all children of the tern chunk.
-    while (chunk.has_children()) {
-        ChunkReader child = chunk.next_child();
-        FourCC id = child.id();
+    // Collect all top-level children first so we can process INFO before PCHS.
+    std::vector<ChunkReader> children = chunk.get_children();
 
-        if (id == INFO) {
-            // tern INFO layout (common variant):
-            //   u32 version           (typically 21 or 22)
-            //   u16 extent_min_x
-            //   u16 extent_min_z        (grid extent in patch units)
-            //   u16 extent_max_x
-            //   u16 extent_max_z
-            //   u32 unused / reserved
-            //   f32 grid_scale
-            //   f32 height_scale
-            //   u32 grid_size_plus_1
-            //   ... (further optional fields)
-            //
-            // Some LVL files use a simpler layout:
-            //   u32 grid_size
-            //   f32 grid_scale
-            //   f32 height_scale
-            //   ... (followed by additional data)
-            //
-            // We handle both by checking available bytes.
+    // -----------------------------------------------------------------------
+    // Pass 1: Find INFO and extract grid parameters.
+    // -----------------------------------------------------------------------
+    uint32_t patches_per_axis = 0;
 
-            if (child.remaining() >= 12) {
-                uint32_t first_u32 = child.read<uint32_t>();
+    for (auto& child : children) {
+        if (child.id() != INFO) continue;
 
-                // Heuristic: if first_u32 is a small value (< 1000), it's
-                // likely a version or grid_size. If it's very large, something
-                // is wrong.
-                if (first_u32 >= 21 && first_u32 <= 30 && child.remaining() >= 20) {
-                    // Versioned format: skip extents (8 bytes) and reserved (4 bytes).
-                    child.skip(12);  // 4*u16 extents + u32 reserved
-                    terrain.grid_scale   = child.read<float>();
-                    terrain.height_scale = child.read<float>();
+        // SWBF2 tern INFO is 28 bytes:
+        //   [0]  float grid_scale
+        //   [4]  float height_scale
+        //   [8]  float unknown
+        //   [12] float unknown (default height)
+        //   [16] uint32 grid_info
+        //   [20] uint32 patch_info
+        //   [24] uint32 patches_per_axis
+        if (child.remaining() >= 28) {
+            terrain.grid_scale   = child.read<float>();  // offset 0
+            terrain.height_scale = child.read<float>();  // offset 4
+            child.skip(8);                               // offsets 8, 12 (unknowns)
+            child.skip(8);                               // offsets 16, 20 (grid/patch info)
+            patches_per_axis = child.read<uint32_t>();   // offset 24
+        } else if (child.remaining() >= 8) {
+            // Fallback for shorter INFO: just read scale values.
+            terrain.grid_scale   = child.read<float>();
+            terrain.height_scale = child.read<float>();
+        }
+        break;
+    }
 
-                    if (child.remaining() >= 4) {
-                        uint32_t gs_plus_1 = child.read<uint32_t>();
-                        terrain.grid_size = gs_plus_1 > 0 ? gs_plus_1 - 1 : 0;
+    // Compute grid dimensions from patches.
+    if (patches_per_axis == 0) {
+        LOG_WARN("TerrainLoader: could not determine patches_per_axis from INFO");
+        return terrain;
+    }
 
-                        // Correct: grid_size might actually be the full value.
-                        // If it's a power-of-2 + 1, use it directly.
-                        if ((gs_plus_1 & (gs_plus_1 - 1)) == 0) {
-                            // gs_plus_1 is a power of 2 — treat it as grid_size.
-                            terrain.grid_size = gs_plus_1;
+    terrain.grid_size = patches_per_axis * CELLS_PER_PATCH + 1;
+    std::size_t total_verts = static_cast<std::size_t>(terrain.grid_size) * terrain.grid_size;
+    terrain.heights.resize(total_verts, 0.0f);
+    terrain.colors.resize(total_verts, 0xFFFFFFFF);
+
+    LOG_DEBUG("TerrainLoader: INFO — patches_per_axis=%u, grid_size=%u, "
+              "grid_scale=%.2f, height_scale=%.2f",
+              patches_per_axis, terrain.grid_size,
+              static_cast<double>(terrain.grid_scale),
+              static_cast<double>(terrain.height_scale));
+
+    // -----------------------------------------------------------------------
+    // Pass 2: Process PCHS to extract patch vertex data.
+    // -----------------------------------------------------------------------
+    for (auto& child : children) {
+        if (child.id() == PCHS) {
+            uint32_t ptch_index = 0;
+
+            while (child.has_children()) {
+                ChunkReader pchs_child = child.next_child();
+
+                // Skip non-PTCH children (COMN, LOWR, etc.)
+                if (pchs_child.id() != PTCH) continue;
+
+                // Compute this patch's position in the grid.
+                uint32_t patch_x = ptch_index % patches_per_axis;
+                uint32_t patch_z = ptch_index / patches_per_axis;
+
+                // Base vertex coordinates in the global grid for this patch.
+                uint32_t base_gx = patch_x * CELLS_PER_PATCH;
+                uint32_t base_gz = patch_z * CELLS_PER_PATCH;
+
+                // Walk PTCH children looking for the geometry VBUF.
+                while (pchs_child.has_children()) {
+                    ChunkReader ptch_child = pchs_child.next_child();
+                    if (ptch_child.id() != VBUF) continue;
+
+                    if (ptch_child.remaining() < 12) continue;
+
+                    uint32_t vertex_count = ptch_child.read<uint32_t>();
+                    uint32_t stride       = ptch_child.read<uint32_t>();
+                    uint32_t flags        = ptch_child.read<uint32_t>();
+
+                    // We only want the geometry VBUF (stride=28, flags=0x122).
+                    if (flags != VBUF_FLAGS_GEOMETRY || stride < 28) continue;
+                    if (vertex_count == 0) continue;
+
+                    std::size_t data_bytes = static_cast<std::size_t>(vertex_count) * stride;
+                    if (ptch_child.remaining() < data_bytes) {
+                        LOG_WARN("TerrainLoader: PTCH[%u] VBUF too small (%zu < %zu)",
+                                 ptch_index, ptch_child.remaining(), data_bytes);
+                        continue;
+                    }
+
+                    // Read each vertex: vec3 position (12) + vec3 normal (12) + u32 color (4).
+                    // Positions are LOCAL to the patch: x,z in [0..cells*grid_scale].
+                    // We convert local position to global grid indices.
+                    for (uint32_t v = 0; v < vertex_count; ++v) {
+                        float px = ptch_child.read<float>();
+                        float py = ptch_child.read<float>();
+                        float pz = ptch_child.read<float>();
+
+                        // Skip normal.
+                        ptch_child.skip(12);
+
+                        uint32_t color = ptch_child.read<uint32_t>();
+
+                        // Skip any extra stride bytes beyond the 28 we read.
+                        if (stride > 28) {
+                            ptch_child.skip(stride - 28);
+                        }
+
+                        // Convert local position to grid index.
+                        // Local coords: x in [0..CELLS_PER_PATCH*grid_scale]
+                        // Grid index: base + local / grid_scale
+                        int local_gx = static_cast<int>(px / terrain.grid_scale + 0.5f);
+                        int local_gz = static_cast<int>(pz / terrain.grid_scale + 0.5f);
+
+                        int gx = static_cast<int>(base_gx) + local_gx;
+                        int gz = static_cast<int>(base_gz) + local_gz;
+
+                        if (gx >= 0 && gx < static_cast<int>(terrain.grid_size) &&
+                            gz >= 0 && gz < static_cast<int>(terrain.grid_size)) {
+                            std::size_t idx = static_cast<std::size_t>(gz) * terrain.grid_size +
+                                              static_cast<std::size_t>(gx);
+                            terrain.heights[idx] = py;
+                            terrain.colors[idx]  = color;
                         }
                     }
-                } else {
-                    // Simpler format: first u32 is grid_size directly.
-                    terrain.grid_size    = first_u32;
-                    terrain.grid_scale   = child.read<float>();
-                    terrain.height_scale = child.read<float>();
                 }
+
+                ptch_index++;
             }
 
-            // Allocate height/color arrays now that we know the grid size.
-            if (terrain.grid_size > 0) {
-                std::size_t total = static_cast<std::size_t>(terrain.grid_size) * terrain.grid_size;
-                terrain.heights.resize(total, 0.0f);
-                terrain.colors.resize(total, 0xFFFFFFFF);
-            }
-
-            LOG_DEBUG("TerrainLoader: INFO — grid_size=%u, grid_scale=%.2f, height_scale=%.2f",
-                      terrain.grid_size, static_cast<double>(terrain.grid_scale),
-                      static_cast<double>(terrain.height_scale));
+            LOG_DEBUG("TerrainLoader: processed %u patches", ptch_index);
         }
-        else if (id == PCHS) {
-            // PCHS is a container of PTCH (patch) children.
-            while (child.has_children()) {
-                ChunkReader ptch = child.next_child();
-
-                if (ptch.id() != PTCH) continue;
-
-                // Inside each PTCH, look for VBUF chunks.
-                while (ptch.has_children()) {
-                    ChunkReader ptch_child = ptch.next_child();
-
-                    if (ptch_child.id() == VBUF) {
-                        parse_vbuf(ptch_child, terrain);
-                    }
-                    // We skip IBUF and patch INFO for now — index data is
-                    // needed for rendering but the heightmap can be
-                    // reconstructed from VBUF positions alone.
-                }
-            }
-        }
-        else if (id == LTEX) {
-            // Each LTEX child represents one texture layer name.
+        else if (child.id() == LTEX) {
             std::string tex_name = parse_ltex(child);
             if (!tex_name.empty()) {
                 terrain.texture_names.push_back(tex_name);
@@ -325,12 +255,7 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
                           terrain.texture_names.size() - 1, tex_name.c_str());
             }
         }
-        else if (id == DTLX || id == DTEX) {
-            // Detail / diffuse texture info — these contain blend weight data
-            // for the texture layers. Layout:
-            //   For each layer: grid_size * grid_size bytes of weights (0-255).
-            //
-            // We store them in texture_weights.
+        else if (child.id() == DTLX || child.id() == DTEX) {
             if (terrain.grid_size > 0) {
                 std::size_t layer_size = static_cast<std::size_t>(terrain.grid_size) *
                                          terrain.grid_size;
@@ -348,7 +273,7 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
 
                 LOG_DEBUG("TerrainLoader: loaded %zu texture weight layers from %s",
                           num_layers,
-                          (id == DTLX) ? "DTLX" : "DTEX");
+                          (child.id() == DTLX) ? "DTLX" : "DTEX");
             }
         }
     }
