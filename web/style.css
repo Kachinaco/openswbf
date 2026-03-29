@@ -1,0 +1,325 @@
+/* ============================================================
+   OpenSWBF — Web Shell Styles
+   Star Wars-inspired dark theme with gold accents (#FFE81F)
+   ============================================================ */
+
+/* --- Reset & Base --- */
+*, *::before, *::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1a2e;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
+    Ubuntu, Cantarell, "Fira Sans", "Droid Sans", "Helvetica Neue", sans-serif;
+  color: #e0e0e0;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --- Canvas --- */
+#canvas {
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  cursor: crosshair;
+}
+
+/* --- Overlays (shared) --- */
+#loading-overlay,
+#instructions-overlay,
+#error-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  transition: opacity 0.4s ease;
+}
+
+.hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+
+/* ============================================================
+   Loading Overlay
+   ============================================================ */
+#loading-overlay {
+  background: radial-gradient(ellipse at center, #1a1a2e 0%, #0d0d1a 70%, #000000 100%);
+  flex-direction: column;
+}
+
+.loading-content {
+  text-align: center;
+  max-width: 520px;
+  padding: 2rem;
+}
+
+.loading-title {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #FFE81F;
+  text-shadow:
+    0 0 20px rgba(255, 232, 31, 0.4),
+    0 0 60px rgba(255, 232, 31, 0.15);
+  margin-bottom: 0.25rem;
+}
+
+.loading-subtitle {
+  font-size: 1rem;
+  color: #8888aa;
+  letter-spacing: 0.08em;
+  margin-bottom: 2.5rem;
+}
+
+/* --- Progress bar --- */
+.progress-container {
+  width: 100%;
+  margin-bottom: 2rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #FFE81F, #ffc107);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+.progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
+    transparent 100%
+  );
+  animation: shimmer 1.8s infinite;
+}
+
+@keyframes shimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  color: #666688;
+  margin-top: 0.75rem;
+  letter-spacing: 0.04em;
+}
+
+/* --- Loading footer --- */
+.loading-footer {
+  margin-top: 1rem;
+}
+
+.github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #6666aa;
+  text-decoration: none;
+  font-size: 0.85rem;
+  letter-spacing: 0.03em;
+  transition: color 0.2s;
+}
+
+.github-link:hover {
+  color: #FFE81F;
+}
+
+.github-icon {
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Instructions Overlay
+   ============================================================ */
+#instructions-overlay {
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+.instructions-panel {
+  background: rgba(26, 26, 46, 0.92);
+  border: 1px solid rgba(255, 232, 31, 0.2);
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  text-align: center;
+  max-width: 440px;
+  width: 90%;
+  box-shadow:
+    0 4px 30px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 232, 31, 0.08);
+}
+
+.instructions-panel h2 {
+  font-size: 1.6rem;
+  color: #FFE81F;
+  margin-bottom: 1.5rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.instructions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.instruction-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  justify-content: center;
+}
+
+.instruction-item span {
+  font-size: 0.85rem;
+  color: #aaaacc;
+  white-space: nowrap;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 2rem;
+  padding: 0.25rem 0.5rem;
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #FFE81F;
+  background: rgba(255, 232, 31, 0.08);
+  border: 1px solid rgba(255, 232, 31, 0.25);
+  border-radius: 4px;
+  text-align: center;
+  line-height: 1.4;
+}
+
+kbd.wide {
+  min-width: 3.5rem;
+}
+
+.instructions-hint {
+  font-size: 0.75rem;
+  color: #555577;
+  margin-top: 0.5rem;
+}
+
+/* ============================================================
+   Error Overlay
+   ============================================================ */
+#error-overlay {
+  background: rgba(0, 0, 0, 0.8);
+}
+
+.error-panel {
+  background: rgba(46, 20, 20, 0.95);
+  border: 1px solid rgba(255, 80, 80, 0.4);
+  border-radius: 12px;
+  padding: 2rem 2.5rem;
+  text-align: center;
+  max-width: 440px;
+  width: 90%;
+}
+
+.error-panel h2 {
+  color: #ff6666;
+  margin-bottom: 1rem;
+  font-size: 1.4rem;
+}
+
+.error-panel p {
+  color: #cc9999;
+  font-size: 0.9rem;
+  margin-bottom: 1.5rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.error-panel button {
+  background: rgba(255, 80, 80, 0.15);
+  color: #ff8888;
+  border: 1px solid rgba(255, 80, 80, 0.4);
+  border-radius: 6px;
+  padding: 0.6rem 1.8rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.error-panel button:hover {
+  background: rgba(255, 80, 80, 0.3);
+  color: #ffffff;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 600px) {
+  .loading-title {
+    font-size: 2rem;
+  }
+
+  .loading-subtitle {
+    font-size: 0.85rem;
+  }
+
+  .instructions-panel {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .instructions-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .instructions-panel h2 {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 380px) {
+  .loading-title {
+    font-size: 1.6rem;
+    letter-spacing: 0.1em;
+  }
+
+  .loading-content {
+    padding: 1rem;
+  }
+}

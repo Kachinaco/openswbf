@@ -1,0 +1,57 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake generated
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# Emscripten output
+*.wasm
+*.wasm.map
+*.data
+*.js.mem
+*.worker.js
+
+# Object files and libraries
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ccache / sccache
+.ccache/
+
+# Game data (user-supplied, never committed)
+data/
+gamedata/
+*.lvl
+*.msh
+*.tga
+*.dds
+
+# OS junk
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Desktop.ini
