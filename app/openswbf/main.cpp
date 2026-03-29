@@ -21,6 +21,18 @@
 #include <emscripten.h>
 #endif
 
+// Forward declaration of the browser file-upload handler.
+// Implemented after all anonymous-namespace helpers so it can access them.
+#ifdef __EMSCRIPTEN__
+extern "C" {
+    EMSCRIPTEN_KEEPALIVE
+    void load_lvl_data(const uint8_t* data, int size, const char* filename);
+
+    EMSCRIPTEN_KEEPALIVE
+    void load_lvl_file(const char* common_path, const char* map_path);
+}
+#endif
+
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -1492,6 +1504,221 @@ static bool load_lvl_assets(const std::string& data_dir) {
              g_app.loaded_models, g_app.loaded_terrains);
     return true;
 }
+
+
+// =========================================================================
+// Browser file-upload handler (Emscripten only)
+// =========================================================================
+
+#ifdef __EMSCRIPTEN__
+extern "C" {
+
+EMSCRIPTEN_KEEPALIVE
+void load_lvl_data(const uint8_t* data, int size, const char* filename) {
+    LOG_INFO("load_lvl_data: received %d bytes from '%s'", size, filename);
+
+    if (!data || size <= 0) {
+        LOG_ERROR("load_lvl_data: invalid data (null or zero size)");
+        return;
+    }
+
+    // Parse the raw bytes with LVLLoader.
+    std::vector<uint8_t> buf(data, data + size);
+    swbf::LVLLoader loader;
+    if (!loader.load(buf)) {
+        LOG_WARN("load_lvl_data: LVLLoader failed to parse '%s'", filename);
+        // Even on failure, some assets may have been partially parsed --
+        // fall through to check what was recovered.
+    }
+
+    LOG_INFO("load_lvl_data: parsed %zu textures, %zu models, %zu terrains",
+             loader.textures().size(),
+             loader.models().size(),
+             loader.terrains().size());
+
+    // --- Ensure the model shader is ready (first upload might need it) ---
+    if (g_model_program == 0) {
+        if (!init_model_shader()) {
+            LOG_ERROR("load_lvl_data: failed to compile model shader");
+        }
+    }
+
+    // --- Terrain: if we got terrain data, replace the current terrain ------
+    if (!loader.terrains().empty()) {
+        // Destroy old terrain buffers so init_terrain_from_lvl can recreate.
+        destroy_terrain();
+
+        const auto& td = loader.terrains()[0];
+        if (init_terrain_from_lvl(td)) {
+            LOG_INFO("load_lvl_data: terrain uploaded (%ux%u grid)",
+                     td.grid_size, td.grid_size);
+            g_app.loaded_terrains += static_cast<int>(loader.terrains().size());
+        } else {
+            LOG_WARN("load_lvl_data: terrain upload failed — regenerating procedural");
+            init_terrain();
+        }
+    }
+
+    // --- Textures: accumulate for model material lookups -------------------
+    // We need a persistent collection so successive uploads can cross-ref.
+    static std::vector<swbf::Texture> s_all_textures;
+
+    for (const auto& tex : loader.textures()) {
+        s_all_textures.push_back(tex);
+    }
+    g_app.loaded_textures += static_cast<int>(loader.textures().size());
+
+    // --- Models: upload to GPU ---------------------------------------------
+    for (const auto& model : loader.models()) {
+        if (model.segments.empty()) continue;
+        LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+        if (!gpu.segments.empty()) {
+            LOG_INFO("load_lvl_data: model uploaded '%s' (%zu segments)",
+                     model.name.c_str(), gpu.segments.size());
+            g_app.gpu_models.push_back(std::move(gpu));
+        }
+    }
+    g_app.loaded_models += static_cast<int>(loader.models().size());
+
+    // Mark that we are now showing LVL assets.
+    if (!loader.textures().empty() || !loader.models().empty() ||
+        !loader.terrains().empty()) {
+        g_app.using_lvl_assets = true;
+    }
+
+    LOG_INFO("load_lvl_data: done.  Totals: %d textures, %d models, %d terrains",
+             g_app.loaded_textures, g_app.loaded_models, g_app.loaded_terrains);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void load_lvl_file(const char* common_path, const char* map_path) {
+    LOG_INFO("load_lvl_file: common='%s' map='%s'", common_path, map_path);
+
+    // Helper: read file from Emscripten virtual filesystem into a byte vector.
+    auto read_vfs_file = [](const char* path) -> std::vector<uint8_t> {
+        if (!path || path[0] == '\0') return {};
+
+        FILE* f = std::fopen(path, "rb");
+        if (!f) {
+            LOG_WARN("load_lvl_file: cannot open '%s'", path);
+            return {};
+        }
+        std::fseek(f, 0, SEEK_END);
+        long sz = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+        if (sz <= 0) { std::fclose(f); return {}; }
+
+        std::vector<uint8_t> buf(static_cast<size_t>(sz));
+        size_t got = std::fread(buf.data(), 1, buf.size(), f);
+        std::fclose(f);
+        buf.resize(got);
+        LOG_INFO("load_lvl_file: read %zu bytes from '%s'", got, path);
+        return buf;
+    };
+
+    // --- Ensure the model shader is ready ---
+    if (g_model_program == 0) {
+        if (!init_model_shader()) {
+            LOG_ERROR("load_lvl_file: failed to compile model shader");
+        }
+    }
+
+    // Persistent texture collection across loads for material lookups.
+    static std::vector<swbf::Texture> s_all_textures;
+
+    // Parse common.lvl first (if provided and non-empty path).
+    if (common_path && common_path[0] != '\0') {
+        auto common_data = read_vfs_file(common_path);
+        if (!common_data.empty()) {
+            swbf::LVLLoader common_loader;
+            if (common_loader.load(common_data)) {
+                LOG_INFO("load_lvl_file: common.lvl parsed: %zu textures, %zu models",
+                         common_loader.textures().size(),
+                         common_loader.models().size());
+
+                for (const auto& tex : common_loader.textures()) {
+                    s_all_textures.push_back(tex);
+                }
+                g_app.loaded_textures += static_cast<int>(common_loader.textures().size());
+
+                for (const auto& model : common_loader.models()) {
+                    if (model.segments.empty()) continue;
+                    LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+                    if (!gpu.segments.empty()) {
+                        g_app.gpu_models.push_back(std::move(gpu));
+                    }
+                }
+                g_app.loaded_models += static_cast<int>(common_loader.models().size());
+            } else {
+                LOG_WARN("load_lvl_file: failed to parse common.lvl");
+            }
+        }
+    }
+
+    // Parse the map .lvl file.
+    if (map_path && map_path[0] != '\0') {
+        auto map_data = read_vfs_file(map_path);
+        if (!map_data.empty()) {
+            swbf::LVLLoader loader;
+            if (!loader.load(map_data)) {
+                LOG_WARN("load_lvl_file: LVLLoader returned false for '%s' "
+                         "(partial data may still be available)", map_path);
+            }
+
+            LOG_INFO("load_lvl_file: map parsed: %zu textures, %zu models, %zu terrains",
+                     loader.textures().size(),
+                     loader.models().size(),
+                     loader.terrains().size());
+
+            // Terrain: replace current terrain with LVL terrain data.
+            if (!loader.terrains().empty()) {
+                destroy_terrain();
+                const auto& td = loader.terrains()[0];
+                if (init_terrain_from_lvl(td)) {
+                    LOG_INFO("load_lvl_file: terrain uploaded (%ux%u grid)",
+                             td.grid_size, td.grid_size);
+                    g_app.loaded_terrains += static_cast<int>(loader.terrains().size());
+
+                    // Adjust camera for potentially larger LVL terrain.
+                    g_app.camera.set_position(0.0f, 50.0f, 100.0f);
+                    g_app.camera.set_rotation(-0.3f, 0.0f);
+                } else {
+                    LOG_WARN("load_lvl_file: terrain upload failed, restoring procedural");
+                    init_terrain();
+                }
+            }
+
+            // Textures: accumulate for model material lookups.
+            for (const auto& tex : loader.textures()) {
+                s_all_textures.push_back(tex);
+            }
+            g_app.loaded_textures += static_cast<int>(loader.textures().size());
+
+            // Models: upload to GPU.
+            for (const auto& model : loader.models()) {
+                if (model.segments.empty()) continue;
+                LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+                if (!gpu.segments.empty()) {
+                    LOG_INFO("load_lvl_file: model '%s' uploaded (%zu segments)",
+                             model.name.c_str(), gpu.segments.size());
+                    g_app.gpu_models.push_back(std::move(gpu));
+                }
+            }
+            g_app.loaded_models += static_cast<int>(loader.models().size());
+        } else {
+            LOG_ERROR("load_lvl_file: could not read map file '%s'", map_path);
+        }
+    }
+
+    // Mark that we are now showing LVL assets.
+    g_app.using_lvl_assets = true;
+
+    LOG_INFO("load_lvl_file: done. Totals: %d textures, %d models, %d terrains",
+             g_app.loaded_textures, g_app.loaded_models, g_app.loaded_terrains);
+}
+
+} // extern "C"
+#endif
 
 
 // =========================================================================

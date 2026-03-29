@@ -28,14 +28,18 @@ target_link_libraries(openswbf
 
 # Emscripten: output .html shell + .wasm + .data
 if(EMSCRIPTEN)
+    set(EMSCRIPTEN_LINK_FLAGS
+        "--shell-file ${CMAKE_SOURCE_DIR}/web/shell.html"
+        " -sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS"
+        " -sEXPORTED_FUNCTIONS=_main,_load_lvl_data,_load_lvl_file"
+        " -sALLOW_MEMORY_GROWTH=1"
+        " -sFORCE_FILESYSTEM=1"
+    )
+    string(CONCAT EMSCRIPTEN_FLAGS_STR ${EMSCRIPTEN_LINK_FLAGS})
     set_target_properties(openswbf PROPERTIES
         SUFFIX ".html"
-        LINK_FLAGS "--shell-file ${CMAKE_SOURCE_DIR}/web/shell.html"
+        LINK_FLAGS "${EMSCRIPTEN_FLAGS_STR}"
     )
-    # Only add shell-file link flag if the shell template exists
-    if(NOT EXISTS "${CMAKE_SOURCE_DIR}/web/shell.html")
-        set_target_properties(openswbf PROPERTIES LINK_FLAGS "")
-    endif()
 endif()
 
 # Native: ensure SDL2 main linkage on platforms that need it

@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenSWBF - Star Wars Battlefront in Your Browser</title>
+  <style>
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+
+    html, body {
+      width:100%; height:100%; overflow:hidden;
+      background:#1a1a2e;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+        Oxygen, Ubuntu, Cantarell, "Fira Sans", "Droid Sans",
+        "Helvetica Neue", sans-serif;
+      color:#e0e0e0;
+      -webkit-font-smoothing:antialiased;
+    }
+
+    /* Canvas fills the viewport */
+    canvas#canvas {
+      display:block; position:absolute; top:0; left:0;
+      width:100%; height:100%; outline:none; cursor:crosshair;
+      background:#000;
+      border:0; padding:0;
+    }
+
+    /* ---------- Loading overlay ---------- */
+    #loading-overlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      display:flex; align-items:center; justify-content:center;
+      flex-direction:column; z-index:200;
+      background:radial-gradient(ellipse at center, #1a1a2e 0%, #0d0d1a 70%, #000 100%);
+      transition: opacity 0.4s ease;
+    }
+    #loading-overlay.hidden { opacity:0; pointer-events:none; }
+
+    .loading-title {
+      font-size:3rem; font-weight:800; letter-spacing:0.15em;
+      text-transform:uppercase; color:#FFE81F;
+      text-shadow: 0 0 20px rgba(255,232,31,0.4), 0 0 60px rgba(255,232,31,0.15);
+      margin-bottom:0.25rem;
+    }
+    .loading-subtitle { font-size:1rem; color:#8888aa; letter-spacing:0.08em; margin-bottom:2.5rem; }
+
+    .progress-bar {
+      width:340px; height:6px; background:rgba(255,255,255,0.08);
+      border-radius:3px; overflow:hidden; margin-bottom:0.75rem;
+    }
+    .progress-fill {
+      height:100%; width:0%; border-radius:3px;
+      background:linear-gradient(90deg,#FFE81F,#ffc107);
+      transition:width 0.3s ease;
+    }
+    #status-text { font-size:0.8rem; color:#666688; letter-spacing:0.04em; }
+
+    /* ---------- Map selector controls (top-left) ---------- */
+    #map-controls {
+      position:fixed; top:0; left:0; z-index:150;
+      display:flex; align-items:center; gap:10px;
+      padding:10px 16px;
+      background:rgba(13,13,26,0.85);
+      border-bottom-right-radius:10px;
+      border:1px solid rgba(255,232,31,0.15);
+      border-top:none; border-left:none;
+      backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px);
+    }
+    #map-controls.hidden { display:none; }
+
+    #map-controls label {
+      font-size:0.8rem; color:#8888aa; letter-spacing:0.04em;
+    }
+
+    #map-selector {
+      background:#0d0d1a; color:#FFE81F;
+      border:1px solid rgba(255,232,31,0.35); border-radius:5px;
+      padding:6px 10px; font-size:0.82rem;
+      cursor:pointer; outline:none;
+    }
+    #map-selector:focus { border-color:#FFE81F; }
+    #map-selector option { background:#0d0d1a; color:#e0e0e0; }
+
+    #btn-load-map {
+      background:rgba(255,232,31,0.12); color:#FFE81F;
+      border:1px solid rgba(255,232,31,0.35); border-radius:6px;
+      padding:7px 16px; font-size:0.85rem; font-weight:600;
+      cursor:pointer; letter-spacing:0.04em;
+      transition:background 0.2s, color 0.2s;
+    }
+    #btn-load-map:hover { background:rgba(255,232,31,0.25); color:#fff; }
+    #btn-load-map:disabled { opacity:0.4; cursor:not-allowed; }
+
+    #map-status {
+      font-size:0.72rem; color:#8888aa; max-width:300px;
+      white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    }
+
+    /* ---------- Download progress bar ---------- */
+    #download-progress {
+      position:fixed; top:52px; left:0; z-index:150;
+      width:340px; padding:8px 16px;
+      background:rgba(13,13,26,0.9);
+      border-bottom-right-radius:8px;
+      border:1px solid rgba(255,232,31,0.1);
+      border-top:none; border-left:none;
+      transition:opacity 0.3s;
+    }
+    #download-progress.hidden { opacity:0; pointer-events:none; }
+    .dl-bar { width:100%; height:4px; background:rgba(255,255,255,0.08); border-radius:2px; overflow:hidden; }
+    .dl-fill { height:100%; width:0%; border-radius:2px; background:linear-gradient(90deg,#FFE81F,#ffc107); transition:width 0.15s; }
+    #dl-text { font-size:0.7rem; color:#666688; margin-top:4px; }
+
+    /* ---------- Instructions hint ---------- */
+    #instructions-hint {
+      position:fixed; bottom:16px; left:50%; transform:translateX(-50%);
+      z-index:140; font-size:0.75rem; color:#555577;
+      letter-spacing:0.04em; text-align:center;
+      transition:opacity 0.4s;
+    }
+    #instructions-hint.hidden { opacity:0; pointer-events:none; }
+
+    /* ---------- Drag-and-drop overlay ---------- */
+    #drop-overlay {
+      position:fixed; top:0; left:0; width:100%; height:100%;
+      display:none; align-items:center; justify-content:center;
+      z-index:300; background:rgba(0,0,0,0.7);
+      backdrop-filter:blur(4px);
+    }
+    #drop-overlay.active { display:flex; }
+    .drop-label {
+      font-size:1.8rem; color:#FFE81F; font-weight:700;
+      letter-spacing:0.1em; text-transform:uppercase;
+      border:3px dashed rgba(255,232,31,0.5); border-radius:20px;
+      padding:40px 60px;
+      text-shadow:0 0 20px rgba(255,232,31,0.3);
+    }
+
+    /* Responsive */
+    @media (max-width:600px) {
+      .loading-title { font-size:2rem; }
+      .drop-label { font-size:1.2rem; padding:24px 32px; }
+      #map-controls { padding:8px 10px; gap:6px; flex-wrap:wrap; }
+      #map-selector { font-size:0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Emscripten requires canvas with id="canvas" -->
+  <canvas class="emscripten" id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+
+  <!-- Loading screen -->
+  <div id="loading-overlay">
+    <h1 class="loading-title">OpenSWBF</h1>
+    <p class="loading-subtitle">Star Wars: Battlefront in Your Browser</p>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <p id="status-text">Initializing...</p>
+  </div>
+
+  <!-- Map selector (shown after WASM load) -->
+  <div id="map-controls" class="hidden">
+    <label for="map-selector">Map:</label>
+    <select id="map-selector">
+      <option value="nab2.lvl">Naboo: Theed</option>
+      <option value="hot1.lvl">Hoth: Echo Base</option>
+      <option value="end1.lvl">Endor: Bunker</option>
+      <option value="geo1.lvl">Geonosis: Dust Plains</option>
+      <option value="kas2.lvl">Kashyyyk: Beachhead</option>
+      <option value="tat2.lvl">Tatooine: Mos Eisley</option>
+      <option value="tat3.lvl">Tatooine: Jabba's Palace</option>
+      <option value="cor1.lvl">Coruscant: Jedi Temple</option>
+      <option value="dag1.lvl">Dagobah</option>
+      <option value="dea1.lvl">Death Star Interior</option>
+      <option value="mus1.lvl">Mustafar</option>
+    </select>
+    <button id="btn-load-map">Load Map</button>
+    <span id="map-status"></span>
+  </div>
+
+  <!-- Download progress bar -->
+  <div id="download-progress" class="hidden">
+    <div class="dl-bar"><div class="dl-fill" id="dl-fill"></div></div>
+    <div id="dl-text">Downloading...</div>
+  </div>
+
+  <!-- Drag-and-drop overlay -->
+  <div id="drop-overlay"><div class="drop-label">Drop .LVL File Here</div></div>
+
+  <!-- Controls hint -->
+  <div id="instructions-hint">
+    WASD to move &nbsp;|&nbsp; Mouse to look &nbsp;|&nbsp; Click to lock pointer &nbsp;|&nbsp; Esc to release &nbsp;|&nbsp; F1 for help
+  </div>
+
+  <script type='text/javascript'>
+    // ----- refs -----
+    var canvasEl       = document.getElementById('canvas');
+    var loadingEl      = document.getElementById('loading-overlay');
+    var progressFill   = document.getElementById('progress-fill');
+    var statusText     = document.getElementById('status-text');
+    var mapControls    = document.getElementById('map-controls');
+    var mapSelector    = document.getElementById('map-selector');
+    var btnLoadMap     = document.getElementById('btn-load-map');
+    var mapStatus      = document.getElementById('map-status');
+    var dlProgress     = document.getElementById('download-progress');
+    var dlFill         = document.getElementById('dl-fill');
+    var dlText         = document.getElementById('dl-text');
+    var dropOverlay    = document.getElementById('drop-overlay');
+    var hintEl         = document.getElementById('instructions-hint');
+
+    // ----- canvas sizing -----
+    function resizeCanvas() {
+      canvasEl.width  = window.innerWidth;
+      canvasEl.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // ----- progress helpers -----
+    function setProgress(frac, msg) {
+      var pct = Math.min(100, Math.max(0, Math.round(frac * 100)));
+      progressFill.style.width = pct + '%';
+      if (msg) statusText.textContent = msg;
+    }
+
+    function formatBytes(n) {
+      if (n < 1024) return n + ' B';
+      if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+      return (n / 1048576).toFixed(1) + ' MB';
+    }
+
+    // ----- webgl context lost -----
+    canvasEl.addEventListener('webglcontextlost', function(e) {
+      alert('WebGL context lost. You will need to reload the page.');
+      e.preventDefault();
+    }, false);
+
+    // ----- Track which files are already in the VFS -----
+    var loadedFiles = {};
+
+    // ----- Fetch a file via XHR with progress -----
+    function fetchFile(url, onProgress, onComplete, onError) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.responseType = 'arraybuffer';
+      xhr.onprogress = function(e) {
+        if (e.lengthComputable && onProgress) {
+          onProgress(e.loaded, e.total);
+        }
+      };
+      xhr.onload = function() {
+        if (xhr.status === 200) {
+          onComplete(new Uint8Array(xhr.response));
+        } else {
+          onError('HTTP ' + xhr.status + ' for ' + url);
+        }
+      };
+      xhr.onerror = function() { onError('Network error fetching ' + url); };
+      xhr.send();
+    }
+
+    // ----- Write data to Emscripten VFS -----
+    function writeToVFS(filename, data) {
+      try {
+        Module.FS.writeFile('/' + filename, data);
+        loadedFiles[filename] = true;
+        console.log('[OpenSWBF] Wrote ' + filename + ' to VFS (' + formatBytes(data.length) + ')');
+      } catch(e) {
+        console.error('[OpenSWBF] Failed to write ' + filename + ' to VFS:', e);
+      }
+    }
+
+    // ----- Show/hide download progress -----
+    function showDLProgress(text) {
+      dlProgress.classList.remove('hidden');
+      dlFill.style.width = '0%';
+      dlText.textContent = text || 'Downloading...';
+    }
+    function updateDLProgress(loaded, total, label) {
+      var pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+      dlFill.style.width = pct + '%';
+      dlText.textContent = label + ': ' + formatBytes(loaded) + ' / ' + formatBytes(total) + ' (' + pct + '%)';
+    }
+    function hideDLProgress() {
+      dlProgress.classList.add('hidden');
+    }
+
+    // ----- Load map sequence -----
+    var isLoading = false;
+
+    function loadMap() {
+      if (isLoading) return;
+
+      var mapFile = mapSelector.value;
+      var commonFile = 'common.lvl';
+      isLoading = true;
+      btnLoadMap.disabled = true;
+      mapStatus.textContent = '';
+
+      var steps = [];
+
+      // Step 1: Download common.lvl if not already loaded
+      if (!loadedFiles[commonFile]) {
+        steps.push(function(next) {
+          showDLProgress('Downloading ' + commonFile + '...');
+          fetchFile(commonFile,
+            function(loaded, total) { updateDLProgress(loaded, total, commonFile); },
+            function(data) {
+              writeToVFS(commonFile, data);
+              next();
+            },
+            function(err) {
+              console.warn('[OpenSWBF] common.lvl not available: ' + err);
+              // Continue without common.lvl -- map may still work
+              next();
+            }
+          );
+        });
+      }
+
+      // Step 2: Download the map file if not already loaded
+      if (!loadedFiles[mapFile]) {
+        steps.push(function(next) {
+          showDLProgress('Downloading ' + mapFile + '...');
+          fetchFile(mapFile,
+            function(loaded, total) { updateDLProgress(loaded, total, mapFile); },
+            function(data) {
+              writeToVFS(mapFile, data);
+              next();
+            },
+            function(err) {
+              hideDLProgress();
+              mapStatus.textContent = 'Error: ' + err;
+              isLoading = false;
+              btnLoadMap.disabled = false;
+            }
+          );
+        });
+      }
+
+      // Step 3: Call C++ to parse the files from VFS
+      steps.push(function(next) {
+        hideDLProgress();
+        mapStatus.textContent = 'Parsing ' + mapFile + '...';
+        try {
+          var commonPath = '/' + commonFile;
+          var mapPath = '/' + mapFile;
+          Module.ccall('load_lvl_file', null,
+            ['string', 'string'],
+            [commonPath, mapPath]);
+          mapStatus.textContent = mapFile + ' loaded!';
+        } catch(err) {
+          console.error('[OpenSWBF] Error calling load_lvl_file:', err);
+          mapStatus.textContent = 'Error parsing: ' + err.message;
+        }
+        isLoading = false;
+        btnLoadMap.disabled = false;
+        next();
+      });
+
+      // Run steps sequentially
+      function runSteps(i) {
+        if (i >= steps.length) return;
+        steps[i](function() { runSteps(i + 1); });
+      }
+      runSteps(0);
+    }
+
+    // ----- Emscripten Module object -----
+    var Module = {
+      canvas: canvasEl,
+      print: function() {
+        var text = Array.prototype.slice.call(arguments).join(' ');
+        console.log('[OpenSWBF]', text);
+      },
+      printErr: function() {
+        var text = Array.prototype.slice.call(arguments).join(' ');
+        console.error('[OpenSWBF]', text);
+      },
+      setStatus: function(text) {
+        if (!text) return;
+        var m = text.match(/([^(]+)\((\d+(\.\d+)?)\/(\d+)\)/);
+        if (m) {
+          var cur = parseFloat(m[2]), tot = parseFloat(m[4]);
+          if (tot > 0) setProgress(cur / tot, m[1].trim());
+        } else {
+          setProgress(0, text);
+        }
+      },
+      onRuntimeInitialized: function() {
+        setProgress(1.0, 'Ready!');
+        setTimeout(function() {
+          loadingEl.classList.add('hidden');
+          mapControls.classList.remove('hidden');
+          canvasEl.focus();
+        }, 400);
+        console.log('[OpenSWBF] WASM runtime initialized.');
+      },
+      onAbort: function(reason) {
+        statusText.textContent = 'Engine aborted: ' + reason;
+      },
+      monitorRunDependencies: function(left) {
+        if (left === 0) setProgress(0.95, 'Finalizing...');
+        else setProgress(0.5 + 0.4 * (1 - left / 10),
+                         'Loading dependencies (' + left + ' remaining)...');
+      },
+      locateFile: function(path) { return path; }
+    };
+    window.Module = Module;
+
+    setProgress(0.05, 'Loading engine...');
+
+    // ----- Button click: Load Map -----
+    btnLoadMap.addEventListener('click', function(e) {
+      e.stopPropagation();
+      loadMap();
+    });
+
+    // ===== DRAG-AND-DROP FILE UPLOAD LOGIC =====
+
+    function handleLvlFile(file) {
+      if (!file) return;
+      var name = file.name;
+      mapStatus.textContent = 'Reading ' + name + ' (' + formatBytes(file.size) + ')...';
+
+      var reader = new FileReader();
+      reader.onload = function(e) {
+        var data = new Uint8Array(e.target.result);
+        writeToVFS(name, data);
+
+        mapStatus.textContent = 'Parsing ' + name + '...';
+        try {
+          // For drag-and-drop, pass the file as both common and map
+          // (user can drop common.lvl first, then a map file)
+          var path = '/' + name;
+          if (name.toLowerCase() === 'common.lvl') {
+            // Just loaded common, don't parse yet
+            mapStatus.textContent = name + ' cached in VFS. Now load a map file.';
+          } else {
+            var commonPath = loadedFiles['common.lvl'] ? '/common.lvl' : '';
+            Module.ccall('load_lvl_file', null,
+              ['string', 'string'],
+              [commonPath, path]);
+            mapStatus.textContent = name + ' loaded!';
+          }
+        } catch (err) {
+          console.error('[LVL Upload] Error:', err);
+          mapStatus.textContent = 'Error loading ' + name + ': ' + err.message;
+        }
+      };
+      reader.onerror = function() {
+        mapStatus.textContent = 'Failed to read ' + name;
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    // Drag-and-drop on the whole document
+    var dragCounter = 0;
+
+    document.addEventListener('dragenter', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      dragCounter++;
+      dropOverlay.classList.add('active');
+    });
+
+    document.addEventListener('dragleave', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      dragCounter--;
+      if (dragCounter <= 0) { dragCounter = 0; dropOverlay.classList.remove('active'); }
+    });
+
+    document.addEventListener('dragover', function(e) {
+      e.preventDefault(); e.stopPropagation();
+    });
+
+    document.addEventListener('drop', function(e) {
+      e.preventDefault(); e.stopPropagation();
+      dragCounter = 0;
+      dropOverlay.classList.remove('active');
+
+      var files = e.dataTransfer.files;
+      for (var i = 0; i < files.length; i++) {
+        if (files[i].name.toLowerCase().endsWith('.lvl')) {
+          handleLvlFile(files[i]);
+          return;
+        }
+      }
+      mapStatus.textContent = 'No .lvl file found in drop';
+    });
+
+    // Hide hint after 8 seconds
+    setTimeout(function() { hintEl.classList.add('hidden'); }, 8000);
+  </script>
+  {{{ SCRIPT }}}
+</body>
+</html>
