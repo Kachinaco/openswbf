@@ -50,20 +50,20 @@ uint32_t g_terrain_ibo         = 0;
 uint32_t g_terrain_index_count = 0;
 uint32_t g_terrain_program     = 0;
 
-// Terrain shader sources (GLSL ES 3.00)
-const char* k_terrain_vert = R"(#version 300 es
+// Terrain shader sources (GLSL ES 1.00 — WebGL 1)
+const char* k_terrain_vert = R"(#version 100
 precision highp float;
 
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec3 a_color;
+attribute vec3 a_position;
+attribute vec3 a_normal;
+attribute vec3 a_color;
 
 uniform mat4 u_view;
 uniform mat4 u_projection;
 
-out vec3 v_color;
-out vec3 v_normal;
-out vec3 v_world_pos;
+varying vec3 v_color;
+varying vec3 v_normal;
+varying vec3 v_world_pos;
 
 void main() {
     v_color     = a_color;
@@ -73,14 +73,12 @@ void main() {
 }
 )";
 
-const char* k_terrain_frag = R"(#version 300 es
+const char* k_terrain_frag = R"(#version 100
 precision highp float;
 
-in vec3 v_color;
-in vec3 v_normal;
-in vec3 v_world_pos;
-
-out vec4 frag_color;
+varying vec3 v_color;
+varying vec3 v_normal;
+varying vec3 v_world_pos;
 
 void main() {
     // Simple directional sunlight from upper-right.
@@ -99,7 +97,7 @@ void main() {
     vec3 lit = ambient + diffuse;
     lit = mix(lit, fog_color, fog * fog);
 
-    frag_color = vec4(lit, 1.0);
+    gl_FragColor = vec4(lit, 1.0);
 }
 )";
 
@@ -149,6 +147,12 @@ uint32_t compile_terrain_shader() {
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+
+    // Bind attribute locations before linking (required for GLSL ES 1.00).
+    glBindAttribLocation(prog, 0, "a_position");
+    glBindAttribLocation(prog, 1, "a_normal");
+    glBindAttribLocation(prog, 2, "a_color");
+
     glLinkProgram(prog);
 
     glDetachShader(prog, vert);
@@ -324,15 +328,15 @@ namespace {
 
 uint32_t g_hud_program = 0;
 
-const char* k_hud_vert = R"(#version 300 es
+const char* k_hud_vert = R"(#version 100
 precision highp float;
 
-layout(location = 0) in vec2 a_position;
-layout(location = 1) in vec4 a_color;
+attribute vec2 a_position;
+attribute vec4 a_color;
 
 uniform vec2 u_screen_size;
 
-out vec4 v_color;
+varying vec4 v_color;
 
 void main() {
     // Convert pixel coords to NDC: (0,0) = top-left, (W,H) = bottom-right.
@@ -345,14 +349,13 @@ void main() {
 }
 )";
 
-const char* k_hud_frag = R"(#version 300 es
+const char* k_hud_frag = R"(#version 100
 precision highp float;
 
-in vec4 v_color;
-out vec4 frag_color;
+varying vec4 v_color;
 
 void main() {
-    frag_color = v_color;
+    gl_FragColor = v_color;
 }
 )";
 
@@ -501,6 +504,11 @@ uint32_t compile_hud_shader() {
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+
+    // Bind attribute locations before linking (required for GLSL ES 1.00).
+    glBindAttribLocation(prog, 0, "a_position");
+    glBindAttribLocation(prog, 1, "a_color");
+
     glLinkProgram(prog);
 
     glDetachShader(prog, vert);
@@ -650,21 +658,21 @@ struct LvlGPUModel {
 uint32_t g_model_program = 0;
 
 // Shader for LVL models: position, normal, UV, vertex color.
-const char* k_model_vert = R"(#version 300 es
+const char* k_model_vert = R"(#version 100
 precision highp float;
 
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_uv;
-layout(location = 3) in vec4 a_color;
+attribute vec3 a_position;
+attribute vec3 a_normal;
+attribute vec2 a_uv;
+attribute vec4 a_color;
 
 uniform mat4 u_view;
 uniform mat4 u_projection;
 
-out vec3 v_normal;
-out vec2 v_uv;
-out vec4 v_color;
-out vec3 v_world_pos;
+varying vec3 v_normal;
+varying vec2 v_uv;
+varying vec4 v_color;
+varying vec3 v_world_pos;
 
 void main() {
     v_normal    = a_normal;
@@ -675,18 +683,16 @@ void main() {
 }
 )";
 
-const char* k_model_frag = R"(#version 300 es
+const char* k_model_frag = R"(#version 100
 precision highp float;
 
-in vec3 v_normal;
-in vec2 v_uv;
-in vec4 v_color;
-in vec3 v_world_pos;
+varying vec3 v_normal;
+varying vec2 v_uv;
+varying vec4 v_color;
+varying vec3 v_world_pos;
 
 uniform sampler2D u_texture;
 uniform int u_has_texture;
-
-out vec4 frag_color;
 
 void main() {
     vec3 sun_dir = normalize(vec3(0.4, 0.8, 0.3));
@@ -694,7 +700,7 @@ void main() {
 
     vec4 base_color = v_color;
     if (u_has_texture == 1) {
-        base_color *= texture(u_texture, v_uv);
+        base_color *= texture2D(u_texture, v_uv);
     }
 
     vec3 ambient = base_color.rgb * 0.35;
@@ -707,7 +713,7 @@ void main() {
     vec3 lit = ambient + diffuse;
     lit = mix(lit, fog_color, fog * fog);
 
-    frag_color = vec4(lit, base_color.a);
+    gl_FragColor = vec4(lit, base_color.a);
 }
 )";
 
@@ -755,6 +761,13 @@ bool init_model_shader() {
     GLuint prog = glCreateProgram();
     glAttachShader(prog, vert);
     glAttachShader(prog, frag);
+
+    // Bind attribute locations before linking (required for GLSL ES 1.00).
+    glBindAttribLocation(prog, 0, "a_position");
+    glBindAttribLocation(prog, 1, "a_normal");
+    glBindAttribLocation(prog, 2, "a_uv");
+    glBindAttribLocation(prog, 3, "a_color");
+
     glLinkProgram(prog);
 
     glDetachShader(prog, vert);

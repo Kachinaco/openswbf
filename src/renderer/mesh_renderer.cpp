@@ -14,14 +14,14 @@ namespace swbf {
 // GLSL ES 3.00 shader sources
 // ===========================================================================
 
-static const char* k_mesh_vert_src = R"glsl(#version 300 es
+static const char* k_mesh_vert_src = R"glsl(#version 100
 precision highp float;
 
 // Vertex attributes
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec2 a_uv;
-layout(location = 3) in vec4 a_color;
+attribute vec3 a_position;
+attribute vec3 a_normal;
+attribute vec2 a_uv;
+attribute vec4 a_color;
 
 // Uniforms
 uniform mat4 u_model;
@@ -29,9 +29,9 @@ uniform mat4 u_view;
 uniform mat4 u_proj;
 
 // Varyings passed to fragment shader
-out vec3 v_world_normal;
-out vec2 v_uv;
-out vec4 v_color;
+varying vec3 v_world_normal;
+varying vec2 v_uv;
+varying vec4 v_color;
 
 void main() {
     mat4 mvp = u_proj * u_view * u_model;
@@ -48,19 +48,17 @@ void main() {
 }
 )glsl";
 
-static const char* k_mesh_frag_src = R"glsl(#version 300 es
+static const char* k_mesh_frag_src = R"glsl(#version 100
 precision mediump float;
 
 // Varyings from vertex shader
-in vec3 v_world_normal;
-in vec2 v_uv;
-in vec4 v_color;
+varying vec3 v_world_normal;
+varying vec2 v_uv;
+varying vec4 v_color;
 
 // Uniforms
 uniform sampler2D u_diffuse;
 uniform int       u_has_texture;
-
-out vec4 frag_color;
 
 void main() {
     // Normalise the interpolated normal.
@@ -76,13 +74,13 @@ void main() {
     vec4 base_color;
     if (u_has_texture != 0) {
         // Sample diffuse texture and modulate by vertex color.
-        base_color = texture(u_diffuse, v_uv) * v_color;
+        base_color = texture2D(u_diffuse, v_uv) * v_color;
     } else {
         // No texture bound — use vertex color directly.
         base_color = v_color;
     }
 
-    frag_color = vec4(base_color.rgb * lit, base_color.a);
+    gl_FragColor = vec4(base_color.rgb * lit, base_color.a);
 }
 )glsl";
 
@@ -126,7 +124,8 @@ static void setup_vertex_attribs() {
 // ===========================================================================
 
 bool MeshRenderer::init() {
-    if (!m_shader.compile(k_mesh_vert_src, k_mesh_frag_src)) {
+    if (!m_shader.compile(k_mesh_vert_src, k_mesh_frag_src,
+            {{0, "a_position"}, {1, "a_normal"}, {2, "a_uv"}, {3, "a_color"}})) {
         LOG_ERROR("MeshRenderer: failed to compile mesh shader");
         return false;
     }

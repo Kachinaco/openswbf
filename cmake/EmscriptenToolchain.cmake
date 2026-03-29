@@ -10,22 +10,21 @@
 set(EMSCRIPTEN_SDL2_FLAGS "-sUSE_SDL=2")
 
 # ---------------------------------------------------------------------------
-# WebGL 2 (OpenGL ES 3.0)
+# WebGL 1 (OpenGL ES 2.0)
 # ---------------------------------------------------------------------------
-set(EMSCRIPTEN_GL_FLAGS "-sMAX_WEBGL_VERSION=2")
+set(EMSCRIPTEN_GL_FLAGS "-sMAX_WEBGL_VERSION=1 -sMIN_WEBGL_VERSION=1 -sFULL_ES2=1")
 
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
 set(EMSCRIPTEN_MEMORY_FLAGS
-    "-sALLOW_MEMORY_GROWTH=1"
-    "-sINITIAL_MEMORY=268435456"   # 256 MiB
+    "-sINITIAL_MEMORY=67108864"    # 64 MiB fixed
 )
 
 # ---------------------------------------------------------------------------
-# Networking / asset fetch
+# Networking / asset fetch (disabled for now — causes memory init issues)
 # ---------------------------------------------------------------------------
-set(EMSCRIPTEN_FETCH_FLAGS "-sFETCH=1")
+set(EMSCRIPTEN_FETCH_FLAGS "")
 
 # ---------------------------------------------------------------------------
 # Audio — OpenAL via Emscripten ports

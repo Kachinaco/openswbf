@@ -44,6 +44,11 @@ GLuint Shader::compile_shader(GLenum type, const char* source) {
 }
 
 bool Shader::compile(const char* vert_src, const char* frag_src) {
+    return compile(vert_src, frag_src, {});
+}
+
+bool Shader::compile(const char* vert_src, const char* frag_src,
+                     std::initializer_list<AttribBinding> attribs) {
     GLuint vert = compile_shader(GL_VERTEX_SHADER, vert_src);
     if (!vert) return false;
 
@@ -56,6 +61,13 @@ bool Shader::compile(const char* vert_src, const char* frag_src) {
     GLuint program = glCreateProgram();
     glAttachShader(program, vert);
     glAttachShader(program, frag);
+
+    // Bind attribute locations before linking (required for GLSL ES 1.00
+    // which lacks layout(location = N) qualifiers).
+    for (const auto& ab : attribs) {
+        glBindAttribLocation(program, ab.first, ab.second);
+    }
+
     glLinkProgram(program);
 
     GLint success = 0;

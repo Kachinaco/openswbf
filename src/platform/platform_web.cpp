@@ -24,9 +24,9 @@ PlatformWindow* platform_init(const PlatformConfig& config) {
         return nullptr;
     }
 
-    // On Emscripten, SDL2 targets WebGL. Request WebGL 2 (OpenGL ES 3.0).
+    // On Emscripten, SDL2 targets WebGL. Request WebGL 1 (OpenGL ES 2.0).
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);

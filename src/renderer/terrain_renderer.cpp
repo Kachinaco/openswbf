@@ -11,15 +11,15 @@ namespace swbf {
 // GLSL ES 3.0 shaders (embedded as string literals)
 // ===========================================================================
 
-static const char* k_terrain_vert_src = R"glsl(#version 300 es
+static const char* k_terrain_vert_src = R"glsl(#version 100
 precision mediump float;
 
 // Per-vertex attributes
-layout(location = 0) in vec3 a_position;
-layout(location = 1) in vec3 a_normal;
-layout(location = 2) in vec4 a_color;       // vertex color (normalized u8 -> float)
-layout(location = 3) in vec4 a_tex_weights; // blend weights for texture layers 0-3
-layout(location = 4) in vec2 a_texcoord;
+attribute vec3 a_position;
+attribute vec3 a_normal;
+attribute vec4 a_color;       // vertex color (normalized u8 -> float)
+attribute vec4 a_tex_weights; // blend weights for texture layers 0-3
+attribute vec2 a_texcoord;
 
 // Uniforms
 uniform mat4 u_model;
@@ -27,10 +27,10 @@ uniform mat4 u_view;
 uniform mat4 u_proj;
 
 // Varyings passed to fragment shader
-out vec3 v_normal;
-out vec4 v_color;
-out vec4 v_tex_weights;
-out vec2 v_texcoord;
+varying vec3 v_normal;
+varying vec4 v_color;
+varying vec4 v_tex_weights;
+varying vec2 v_texcoord;
 
 void main() {
     mat4 mvp = u_proj * u_view * u_model;
@@ -44,13 +44,13 @@ void main() {
 }
 )glsl";
 
-static const char* k_terrain_frag_src = R"glsl(#version 300 es
+static const char* k_terrain_frag_src = R"glsl(#version 100
 precision mediump float;
 
-in vec3 v_normal;
-in vec4 v_color;
-in vec4 v_tex_weights;
-in vec2 v_texcoord;
+varying vec3 v_normal;
+varying vec4 v_color;
+varying vec4 v_tex_weights;
+varying vec2 v_texcoord;
 
 // Splatmap texture layers (up to 4 active)
 uniform sampler2D u_tex0;
@@ -61,8 +61,6 @@ uniform int u_texture_count; // 0 = vertex-color-only mode
 
 // Simple directional light for basic shading
 uniform vec3 u_light_dir; // normalized, world-space
-
-out vec4 frag_color;
 
 void main() {
     vec3 normal = normalize(v_normal);
@@ -80,17 +78,17 @@ void main() {
                            + v_tex_weights.z + v_tex_weights.w;
 
         if (total_weight > 0.001) {
-            tex_color += v_tex_weights.x * texture(u_tex0, v_texcoord);
+            tex_color += v_tex_weights.x * texture2D(u_tex0, v_texcoord);
             if (u_texture_count > 1)
-                tex_color += v_tex_weights.y * texture(u_tex1, v_texcoord);
+                tex_color += v_tex_weights.y * texture2D(u_tex1, v_texcoord);
             if (u_texture_count > 2)
-                tex_color += v_tex_weights.z * texture(u_tex2, v_texcoord);
+                tex_color += v_tex_weights.z * texture2D(u_tex2, v_texcoord);
             if (u_texture_count > 3)
-                tex_color += v_tex_weights.w * texture(u_tex3, v_texcoord);
+                tex_color += v_tex_weights.w * texture2D(u_tex3, v_texcoord);
             tex_color /= total_weight;
         } else {
             // No weights — fall back to first texture.
-            tex_color = texture(u_tex0, v_texcoord);
+            tex_color = texture2D(u_tex0, v_texcoord);
         }
 
         // Multiply blended texture by vertex color (baked lighting).
@@ -102,7 +100,7 @@ void main() {
 
     // Apply lighting.
     vec3 lit = base_color.rgb * light;
-    frag_color = vec4(lit, base_color.a);
+    gl_FragColor = vec4(lit, base_color.a);
 }
 )glsl";
 
@@ -152,7 +150,9 @@ u32 TerrainRenderer::pack_color(u8 r, u8 g, u8 b, u8 a) {
 bool TerrainRenderer::init() {
     LOG_INFO("TerrainRenderer: compiling shaders...");
 
-    if (!m_shader.compile(k_terrain_vert_src, k_terrain_frag_src)) {
+    if (!m_shader.compile(k_terrain_vert_src, k_terrain_frag_src,
+            {{0, "a_position"}, {1, "a_normal"}, {2, "a_color"},
+             {3, "a_tex_weights"}, {4, "a_texcoord"}})) {
         LOG_ERROR("TerrainRenderer: failed to compile terrain shaders");
         return false;
     }

@@ -11,15 +11,15 @@ namespace swbf {
 // GLSL ES 300 shaders (embedded as string literals)
 // -------------------------------------------------------------------------
 
-static const char* k_sky_vert_src = R"(#version 300 es
+static const char* k_sky_vert_src = R"(#version 100
 precision highp float;
 
-layout(location = 0) in vec3 a_position;
+attribute vec3 a_position;
 
 uniform mat4 u_view;
 uniform mat4 u_projection;
 
-out float v_height;
+varying float v_height;
 
 void main() {
     // Normalized Y of the vertex (0 at horizon, 1 at zenith).
@@ -34,20 +34,19 @@ void main() {
 }
 )";
 
-static const char* k_sky_frag_src = R"(#version 300 es
+static const char* k_sky_frag_src = R"(#version 100
 precision highp float;
 
 uniform vec3 u_top_color;
 uniform vec3 u_bottom_color;
 
-in float v_height;
-out vec4 frag_color;
+varying float v_height;
 
 void main() {
     // Smoothstep gives a slightly more pleasing gradient than a raw lerp.
     float t = smoothstep(0.0, 1.0, v_height);
     vec3 color = mix(u_bottom_color, u_top_color, t);
-    frag_color = vec4(color, 1.0);
+    gl_FragColor = vec4(color, 1.0);
 }
 )";
 
@@ -76,6 +75,10 @@ static GLuint link_gl_program(GLuint vert, GLuint frag) {
     GLuint program = glCreateProgram();
     glAttachShader(program, vert);
     glAttachShader(program, frag);
+
+    // Bind attribute locations before linking (required for GLSL ES 1.00).
+    glBindAttribLocation(program, 0, "a_position");
+
     glLinkProgram(program);
 
     GLint success = 0;

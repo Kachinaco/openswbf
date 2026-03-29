@@ -3,12 +3,17 @@
 #include "renderer/backend/gl_context.h"
 #include "core/types.h"
 
+#include <initializer_list>
 #include <string>
+#include <utility>
 
 namespace swbf {
 
+/// Attribute binding: (location index, attribute name).
+using AttribBinding = std::pair<GLuint, const char*>;
+
 // ---------------------------------------------------------------------------
-// Shader — compiles and links a vertex + fragment GLSL ES 3.0 program
+// Shader — compiles and links a vertex + fragment GLSL ES 1.00 program
 // ---------------------------------------------------------------------------
 
 class Shader {
@@ -25,6 +30,11 @@ public:
     /// Compile and link a program from vertex and fragment shader source.
     /// Returns true on success. On failure, logs the error and returns false.
     bool compile(const char* vert_src, const char* frag_src);
+
+    /// Compile and link with explicit attribute location bindings.
+    /// Bindings are applied before linking (required for GLSL ES 1.00).
+    bool compile(const char* vert_src, const char* frag_src,
+                 std::initializer_list<AttribBinding> attribs);
 
     /// Bind this program for rendering.
     void bind() const;
