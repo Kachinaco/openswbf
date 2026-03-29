@@ -61,6 +61,17 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(glm stb)
 
+# Silence warnings in third-party GLM code (compiled component + headers).
+if(TARGET glm)
+    target_compile_options(glm PRIVATE -w)
+endif()
+get_target_property(_glm_inc glm::glm INTERFACE_INCLUDE_DIRECTORIES)
+if(_glm_inc)
+    set_target_properties(glm::glm PROPERTIES
+        INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_glm_inc}"
+    )
+endif()
+
 # ---------------------------------------------------------------------------
 # Lua needs a small CMake wrapper because upstream doesn't ship CMakeLists.
 # We build it as a static library ourselves.

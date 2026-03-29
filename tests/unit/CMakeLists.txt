@@ -15,9 +15,25 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-# Suppress compiler warnings inside GoogleTest headers for our strict warning flags.
-target_compile_options(gtest PRIVATE -w)
-target_compile_options(gtest_main PRIVATE -w)
+# Suppress compiler warnings inside GoogleTest/GoogleMock for our strict warning flags.
+foreach(_gt_compile_target gtest gtest_main gmock gmock_main)
+    if(TARGET ${_gt_compile_target})
+        target_compile_options(${_gt_compile_target} PRIVATE -w)
+    endif()
+endforeach()
+
+# Mark GoogleTest/GoogleMock include directories as SYSTEM to suppress warnings
+# from third-party headers when included by our test code.
+foreach(_gt_target gtest gtest_main gmock gmock_main)
+    if(TARGET ${_gt_target})
+        get_target_property(_gt_inc ${_gt_target} INTERFACE_INCLUDE_DIRECTORIES)
+        if(_gt_inc)
+            set_target_properties(${_gt_target} PROPERTIES
+                INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_gt_inc}"
+            )
+        endif()
+    endif()
+endforeach()
 
 # ---------------------------------------------------------------------------
 # Test executable
