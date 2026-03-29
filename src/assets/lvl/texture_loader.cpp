@@ -244,10 +244,10 @@ std::vector<uint8_t> TextureLoader::decode_a4r4g4b4(const uint8_t* src,
         std::memcpy(&pixel, src + i * 2, 2);
 
         // D3DFMT_A4R4G4B4 bit layout: AAAA RRRR GGGG BBBB
-        uint8_t a4 = (pixel >> 12) & 0xF;
-        uint8_t r4 = (pixel >>  8) & 0xF;
-        uint8_t g4 = (pixel >>  4) & 0xF;
-        uint8_t b4 =  pixel        & 0xF;
+        uint8_t a4 = static_cast<uint8_t>((pixel >> 12) & 0xF);
+        uint8_t r4 = static_cast<uint8_t>((pixel >>  8) & 0xF);
+        uint8_t g4 = static_cast<uint8_t>((pixel >>  4) & 0xF);
+        uint8_t b4 = static_cast<uint8_t>( pixel        & 0xF);
 
         out[i * 4 + 0] = static_cast<uint8_t>(r4 * 17); // 0-15 -> 0-255
         out[i * 4 + 1] = static_cast<uint8_t>(g4 * 17);

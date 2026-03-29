@@ -132,9 +132,12 @@ endif()
 # -----------------------------------------------------------------------------
 # Optional: tests
 # -----------------------------------------------------------------------------
-if(OPENSWBF_BUILD_TESTS)
+if(OPENSWBF_BUILD_TESTS AND NOT EMSCRIPTEN)
     enable_testing()
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/CMakeLists.txt")
         add_subdirectory(tests)
+    endif()
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit/CMakeLists.txt")
+        add_subdirectory(tests/unit)
     endif()
 endif()

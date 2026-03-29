@@ -100,7 +100,7 @@ void LVLLoader::dispatch_chunk(ChunkReader& chunk) {
             TerrainData terrain = tern_loader.load(chunk);
             if (terrain.grid_size > 0) {
                 LOG_DEBUG("LVLLoader: loaded terrain (grid %u, %.1f scale)",
-                          terrain.grid_size, terrain.grid_scale);
+                          terrain.grid_size, static_cast<double>(terrain.grid_scale));
                 m_terrains.push_back(std::move(terrain));
             }
         } catch (const std::exception& e) {

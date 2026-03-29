@@ -195,7 +195,7 @@ bool TerrainRenderer::init() {
 
 void TerrainRenderer::upload(const TerrainData& terrain) {
     LOG_INFO("TerrainRenderer: uploading terrain (%u x %u, scale %.2f)",
-             terrain.grid_size, terrain.grid_size, terrain.grid_scale);
+             terrain.grid_size, terrain.grid_size, static_cast<double>(terrain.grid_scale));
 
     const u32 grid = terrain.grid_size;
     const float scale = terrain.grid_scale;

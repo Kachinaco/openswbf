@@ -181,8 +181,8 @@ bool init_terrain() {
 
     for (int row = 0; row < GRID; ++row) {
         for (int col = 0; col < GRID; ++col) {
-            float wx = col * SCALE - HALF;
-            float wz = row * SCALE - HALF;
+            float wx = static_cast<float>(col) * SCALE - HALF;
+            float wz = static_cast<float>(row) * SCALE - HALF;
             float wy = terrain_height(wx, wz);
 
             // Compute normal via central differences.

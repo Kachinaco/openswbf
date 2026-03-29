@@ -2,6 +2,12 @@
 
 #include <cstdarg>
 
+#if defined(__GNUC__) || defined(__clang__)
+#define SWBF_PRINTF_FMT(fmt_idx, va_idx) __attribute__((format(printf, fmt_idx, va_idx)))
+#else
+#define SWBF_PRINTF_FMT(fmt_idx, va_idx)
+#endif
+
 namespace swbf {
 
 enum class LogLevel {
@@ -19,9 +25,11 @@ void log_set_level(LogLevel level);
 LogLevel log_get_level();
 
 // Core logging function. Prefer the macros below.
+SWBF_PRINTF_FMT(2, 3)
 void log(LogLevel level, const char* fmt, ...);
 
 // va_list variant for forwarding from other variadic functions.
+SWBF_PRINTF_FMT(2, 0)
 void logv(LogLevel level, const char* fmt, std::va_list args);
 
 } // namespace swbf

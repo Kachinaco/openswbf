@@ -21,7 +21,8 @@ constexpr FourCC INFO = make_fourcc('I', 'N', 'F', 'O');
 constexpr FourCC PCHS = make_fourcc('P', 'C', 'H', 'S');
 constexpr FourCC PTCH = make_fourcc('P', 'T', 'C', 'H');
 constexpr FourCC VBUF = make_fourcc('V', 'B', 'U', 'F');
-constexpr FourCC IBUF = make_fourcc('I', 'B', 'U', 'F');
+// IBUF is not currently used — index buffers are skipped during terrain loading.
+// constexpr FourCC IBUF = make_fourcc('I', 'B', 'U', 'F');
 constexpr FourCC LTEX = make_fourcc('L', 'T', 'E', 'X');
 constexpr FourCC DTLX = make_fourcc('D', 'T', 'L', 'X');
 constexpr FourCC DTEX = make_fourcc('D', 'T', 'E', 'X');
@@ -33,7 +34,8 @@ constexpr FourCC NAME = make_fourcc('N', 'A', 'M', 'E');
 // Type 2   (0x002) = position(vec3) = 12 bytes/vertex
 constexpr uint32_t VBUF_TYPE_POS_NRM_CLR = 290;  // 0x122
 constexpr uint32_t VBUF_TYPE_POS_NRM     = 34;   // 0x022
-constexpr uint32_t VBUF_TYPE_POS         = 2;     // 0x002
+// VBUF_TYPE_POS is reserved for future use when position-only vertices are handled.
+// constexpr uint32_t VBUF_TYPE_POS       = 2;     // 0x002
 
 } // anonymous namespace
 
@@ -142,12 +144,12 @@ void TerrainLoader::parse_vbuf(ChunkReader& vbuf, TerrainData& terrain) {
         //   gx = (px / grid_scale) + grid_size/2
         //   gz = (pz / grid_scale) + grid_size/2
         if (terrain.grid_size > 0 && terrain.grid_scale > 0.0f) {
-            int gx = static_cast<int>(px / terrain.grid_scale + terrain.grid_size * 0.5f + 0.5f);
-            int gz = static_cast<int>(pz / terrain.grid_scale + terrain.grid_size * 0.5f + 0.5f);
+            int gx = static_cast<int>(px / terrain.grid_scale + static_cast<float>(terrain.grid_size) * 0.5f + 0.5f);
+            int gz = static_cast<int>(pz / terrain.grid_scale + static_cast<float>(terrain.grid_size) * 0.5f + 0.5f);
 
             if (gx >= 0 && gx < static_cast<int>(terrain.grid_size) &&
                 gz >= 0 && gz < static_cast<int>(terrain.grid_size)) {
-                std::size_t idx = static_cast<std::size_t>(gz) * terrain.grid_size + gx;
+                std::size_t idx = static_cast<std::size_t>(gz) * terrain.grid_size + static_cast<std::size_t>(gx);
                 terrain.heights[idx] = py;
                 terrain.colors[idx]  = color;
             }
@@ -234,10 +236,10 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
         if (id == INFO) {
             // tern INFO layout (common variant):
             //   u32 version           (typically 21 or 22)
-            //   u16 extent_min_x      \
-            //   u16 extent_min_z       |  grid extent in patch units
-            //   u16 extent_max_x       |
-            //   u16 extent_max_z      /
+            //   u16 extent_min_x
+            //   u16 extent_min_z        (grid extent in patch units)
+            //   u16 extent_max_x
+            //   u16 extent_max_z
             //   u32 unused / reserved
             //   f32 grid_scale
             //   f32 height_scale
@@ -291,7 +293,8 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
             }
 
             LOG_DEBUG("TerrainLoader: INFO — grid_size=%u, grid_scale=%.2f, height_scale=%.2f",
-                      terrain.grid_size, terrain.grid_scale, terrain.height_scale);
+                      terrain.grid_size, static_cast<double>(terrain.grid_scale),
+                      static_cast<double>(terrain.height_scale));
         }
         else if (id == PCHS) {
             // PCHS is a container of PTCH (patch) children.
@@ -352,7 +355,8 @@ TerrainData TerrainLoader::load(ChunkReader& chunk) {
 
     LOG_INFO("TerrainLoader: grid=%u, scale=%.2f, height_scale=%.2f, "
              "%zu texture layers, %zu weight layers",
-             terrain.grid_size, terrain.grid_scale, terrain.height_scale,
+             terrain.grid_size, static_cast<double>(terrain.grid_scale),
+             static_cast<double>(terrain.height_scale),
              terrain.texture_names.size(), terrain.texture_weights.size());
 
     return terrain;
