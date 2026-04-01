@@ -40,8 +40,13 @@ bool LVLLoader::load(const std::vector<uint8_t>& data) {
         }
     }
 
-    LOG_INFO("LVLLoader: loaded %zu textures, %zu models, %zu terrains",
-             m_textures.size(), m_models.size(), m_terrains.size());
+    LOG_INFO("LVLLoader: loaded %zu textures, %zu models, %zu terrains, "
+             "%zu entity classes, %zu skeletons, %zu lights, %zu paths, "
+             "%zu sounds, %zu scripts, %zu localizations",
+             m_textures.size(), m_models.size(), m_terrains.size(),
+             m_entity_classes.size(), m_skeletons.size(), m_lights.size(),
+             m_paths.size(), m_sounds.size(), m_scripts.size(),
+             m_localizations.size());
 
     return true;
 }
@@ -107,6 +112,105 @@ void LVLLoader::dispatch_chunk(ChunkReader& chunk) {
             LOG_WARN("LVLLoader: failed to load tern chunk: %s", e.what());
         }
     }
+    else if (id == chunk_id::entc || id == chunk_id::ordc ||
+             id == chunk_id::wpnc || id == chunk_id::expc) {
+        // Entity class definition (soldier, weapon, ordnance, explosion)
+        try {
+            EntityClassLoader ec_loader;
+            EntityClass ec = ec_loader.load(chunk);
+            if (!ec.name.empty() || ec.type_hash != 0) {
+                LOG_DEBUG("LVLLoader: loaded entity class '%s' (%zu properties)",
+                          ec.name.c_str(), ec.properties.size());
+                m_entity_classes.push_back(std::move(ec));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load entity class chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::skel) {
+        // Skeleton (bone hierarchy)
+        try {
+            SkeletonLoader skel_loader;
+            Skeleton skel = skel_loader.load(chunk);
+            if (!skel.bones.empty()) {
+                LOG_DEBUG("LVLLoader: loaded skeleton '%s' (%zu bones)",
+                          skel.name.c_str(), skel.bones.size());
+                m_skeletons.push_back(std::move(skel));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load skel chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::lght) {
+        // Lights
+        try {
+            LightLoader lght_loader;
+            auto lights = lght_loader.load(chunk);
+            LOG_DEBUG("LVLLoader: loaded %zu lights", lights.size());
+            for (auto& light : lights) {
+                m_lights.push_back(std::move(light));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load lght chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::plan || id == chunk_id::PATH) {
+        // AI path / planning network
+        try {
+            PathLoader path_loader;
+            PathNetwork network = path_loader.load(chunk);
+            if (!network.nodes.empty()) {
+                LOG_DEBUG("LVLLoader: loaded path network '%s' (%zu nodes)",
+                          network.name.c_str(), network.nodes.size());
+                m_paths.push_back(std::move(network));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load path chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::snd_) {
+        // Sound / audio asset
+        try {
+            SoundLoader snd_loader;
+            Sound snd = snd_loader.load(chunk);
+            if (!snd.name.empty() || !snd.sample_data.empty()) {
+                LOG_DEBUG("LVLLoader: loaded sound '%s' (%.2fs)",
+                          snd.name.c_str(), static_cast<double>(snd.duration()));
+                m_sounds.push_back(std::move(snd));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load snd_ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::scr_) {
+        // Lua script
+        try {
+            ScriptLoader scr_loader;
+            Script script = scr_loader.load_script(chunk);
+            if (!script.name.empty() || !script.data.empty()) {
+                LOG_DEBUG("LVLLoader: loaded script '%s' (%zu bytes, %s)",
+                          script.name.c_str(), script.data.size(),
+                          script.is_bytecode() ? "bytecode" : "source");
+                m_scripts.push_back(std::move(script));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load scr_ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::Locl) {
+        // Localization string table
+        try {
+            ScriptLoader scr_loader;
+            LocalizationTable table = scr_loader.load_localization(chunk);
+            if (!table.entries.empty()) {
+                LOG_DEBUG("LVLLoader: loaded localization '%s' (%zu entries)",
+                          table.name.c_str(), table.entries.size());
+                m_localizations.push_back(std::move(table));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load Locl chunk: %s", e.what());
+        }
+    }
     else {
         // Unhandled chunk type — log at TRACE level for debugging.
         // Build a readable 4-char tag string.
@@ -122,13 +226,23 @@ void LVLLoader::dispatch_chunk(ChunkReader& chunk) {
 // ---------------------------------------------------------------------------
 
 std::size_t LVLLoader::asset_count() const {
-    return m_textures.size() + m_models.size() + m_terrains.size();
+    return m_textures.size() + m_models.size() + m_terrains.size() +
+           m_entity_classes.size() + m_skeletons.size() + m_lights.size() +
+           m_paths.size() + m_sounds.size() + m_scripts.size() +
+           m_localizations.size();
 }
 
 void LVLLoader::clear() {
     m_textures.clear();
     m_models.clear();
     m_terrains.clear();
+    m_entity_classes.clear();
+    m_skeletons.clear();
+    m_lights.clear();
+    m_paths.clear();
+    m_sounds.clear();
+    m_scripts.clear();
+    m_localizations.clear();
 }
 
 } // namespace swbf

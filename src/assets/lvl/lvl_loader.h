@@ -1,6 +1,12 @@
 #pragma once
 
+#include "assets/lvl/entity_class_loader.h"
+#include "assets/lvl/light_loader.h"
 #include "assets/lvl/model_loader.h"
+#include "assets/lvl/path_loader.h"
+#include "assets/lvl/script_loader.h"
+#include "assets/lvl/skeleton_loader.h"
+#include "assets/lvl/sound_loader.h"
 #include "assets/lvl/terrain_loader.h"
 #include "assets/lvl/texture_loader.h"
 #include "core/filesystem.h"
@@ -51,6 +57,13 @@ public:
     const std::vector<Texture>& textures() const { return m_textures; }
     const std::vector<Model>& models() const { return m_models; }
     const std::vector<TerrainData>& terrains() const { return m_terrains; }
+    const std::vector<EntityClass>& entity_classes() const { return m_entity_classes; }
+    const std::vector<Skeleton>& skeletons() const { return m_skeletons; }
+    const std::vector<Light>& lights() const { return m_lights; }
+    const std::vector<PathNetwork>& paths() const { return m_paths; }
+    const std::vector<Sound>& sounds() const { return m_sounds; }
+    const std::vector<Script>& scripts() const { return m_scripts; }
+    const std::vector<LocalizationTable>& localizations() const { return m_localizations; }
 
     // Total number of assets loaded (across all types).
     std::size_t asset_count() const;
@@ -62,9 +75,16 @@ private:
     // Dispatch a single child chunk to the appropriate sub-loader.
     void dispatch_chunk(ChunkReader& chunk);
 
-    std::vector<Texture>     m_textures;
-    std::vector<Model>       m_models;
-    std::vector<TerrainData> m_terrains;
+    std::vector<Texture>            m_textures;
+    std::vector<Model>              m_models;
+    std::vector<TerrainData>        m_terrains;
+    std::vector<EntityClass>        m_entity_classes;
+    std::vector<Skeleton>           m_skeletons;
+    std::vector<Light>              m_lights;
+    std::vector<PathNetwork>        m_paths;
+    std::vector<Sound>              m_sounds;
+    std::vector<Script>             m_scripts;
+    std::vector<LocalizationTable>  m_localizations;
 };
 
 } // namespace swbf
