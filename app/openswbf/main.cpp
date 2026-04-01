@@ -11,6 +11,9 @@
 #include "renderer/backend/gl_shader.h"
 #include "renderer/camera.h"
 #include "renderer/sky_renderer.h"
+#include "renderer/particle_system.h"
+#include "renderer/particle_renderer.h"
+#include "renderer/particle_effects.h"
 #include "input/input_system.h"
 #include "audio/audio_device.h"
 #include "core/log.h"
@@ -1123,11 +1126,13 @@ bool init_terrain_from_lvl(const swbf::TerrainData& td) {
 // =========================================================================
 
 struct AppState {
-    swbf::GLContext    gl_context;
-    swbf::InputSystem  input;
-    swbf::AudioDevice  audio;
-    swbf::SkyRenderer  sky;
-    swbf::Camera       camera;
+    swbf::GLContext          gl_context;
+    swbf::InputSystem        input;
+    swbf::AudioDevice        audio;
+    swbf::SkyRenderer        sky;
+    swbf::Camera             camera;
+    swbf::ParticleSystem     particles;
+    swbf::ParticleRenderer   particle_renderer;
 
     // Timing
     uint32_t last_tick_ms     = 0;
@@ -1150,6 +1155,9 @@ struct AppState {
     // HUD state.
     bool show_help = false;          // toggled by F1
     float hud_hint_timer = 5.0f;     // seconds to show "Press F1" hint
+
+    // -- Particle demo state ----------------------------------------------
+    float particle_demo_timer = 0.0f;  // timer for spawning demo effects
 
     // Status info.
     int loaded_textures = 0;
@@ -1248,6 +1256,36 @@ static void frame_tick() {
 
     g_app.camera.update(dt);
 
+    // -- Particle system update -------------------------------------------
+    g_app.particles.update(dt);
+
+    // -- Particle demo effects (P key to spawn explosion at camera) -------
+    if (g_app.input.key_pressed(SDL_SCANCODE_P)) {
+        swbf::effects::explosion(g_app.particles,
+                                  g_app.camera.x(),
+                                  g_app.camera.y() - 5.0f,
+                                  g_app.camera.z() - 15.0f);
+        LOG_INFO("Particle demo: explosion spawned");
+    }
+    // E key: sparks at a point ahead of the camera
+    if (g_app.input.key_pressed(SDL_SCANCODE_E)) {
+        swbf::effects::sparks(g_app.particles,
+                               g_app.camera.x(),
+                               g_app.camera.y() - 3.0f,
+                               g_app.camera.z() - 10.0f,
+                               0.0f, 1.0f, 0.0f);
+        LOG_INFO("Particle demo: sparks spawned");
+    }
+    // M key: muzzle flash at a point ahead of the camera
+    if (g_app.input.key_pressed(SDL_SCANCODE_M)) {
+        swbf::effects::muzzle_flash(g_app.particles,
+                                     g_app.camera.x(),
+                                     g_app.camera.y(),
+                                     g_app.camera.z() - 2.0f,
+                                     0.0f, 0.0f, -1.0f);
+        LOG_INFO("Particle demo: muzzle flash spawned");
+    }
+
     // -- Window resize ----------------------------------------------------
     if (g_app.input.window_resized()) {
         int w = g_app.input.window_width();
@@ -1274,6 +1312,9 @@ static void frame_tick() {
     if (g_app.using_lvl_assets) {
         render_lvl_models(g_app.gpu_models, view, proj);
     }
+
+    // Particle effects (rendered after opaque geometry, before HUD).
+    g_app.particle_renderer.render(g_app.particles, view, proj);
 
     // -- HUD overlay ------------------------------------------------------
     int screen_w = g_app.gl_context.width();
@@ -1304,7 +1345,12 @@ static void frame_tick() {
             "Shift      Move down\n"
             "Ctrl       Move faster\n"
             "Escape     Release mouse\n"
-            "F1         Toggle this help\n";
+            "F1         Toggle this help\n"
+            "\n"
+            "Particle Effects\n"
+            "P          Spawn explosion\n"
+            "E          Spawn sparks\n"
+            "M          Muzzle flash\n";
 
         // Drop shadow then foreground text.
         draw_text(help_text, 12.0f, 12.0f,
@@ -1776,6 +1822,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    // -- Particle renderer ------------------------------------------------
+    if (!g_app.particle_renderer.init()) {
+        LOG_WARN("Failed to initialise particle renderer — continuing without particles.");
+    }
+
     // -- HUD overlay ------------------------------------------------------
     if (!init_hud()) {
         LOG_WARN("Failed to initialise HUD — continuing without overlay.");
@@ -1852,6 +1903,8 @@ int main(int argc, char* argv[]) {
     destroy_hud();
     destroy_lvl_models(g_app.gpu_models);
     destroy_model_shader();
+    g_app.particles.clear();
+    g_app.particle_renderer.destroy();
     g_app.sky.destroy();
     g_app.audio.shutdown();
 
