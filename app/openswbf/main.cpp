@@ -16,9 +16,30 @@
 #include "renderer/particle_effects.h"
 #include "input/input_system.h"
 #include "audio/audio_device.h"
+#include "audio/audio_manager.h"
 #include "core/log.h"
 #include "core/filesystem.h"
 #include "assets/lvl/lvl_loader.h"
+
+// Game systems
+#include "game/game_systems.h"
+#include "game/entity_manager.h"
+#include "game/spawn_system.h"
+#include "game/command_post_system.h"
+#include "game/conquest_mode.h"
+#include "game/weapon_system.h"
+#include "game/ai_system.h"
+#include "game/health_system.h"
+#include "game/vehicle_system.h"
+#include "game/pathfinder.h"
+#include "game/hud.h"
+#include "game/scoreboard.h"
+#include "game/menu.h"
+#include "physics/physics_world.h"
+
+// Scripting
+#include "scripting/lua_runtime.h"
+#include "scripting/swbf_api.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -1129,10 +1150,33 @@ struct AppState {
     swbf::GLContext          gl_context;
     swbf::InputSystem        input;
     swbf::AudioDevice        audio;
+    swbf::AudioManager       audio_mgr;
     swbf::SkyRenderer        sky;
     swbf::Camera             camera;
     swbf::ParticleSystem     particles;
     swbf::ParticleRenderer   particle_renderer;
+    swbf::PhysicsWorld       physics;
+
+    // -- Game systems (integrated from all branches) ----------------------
+    swbf::EntityManager      entity_manager;
+    swbf::SpawnSystem        spawn_system;
+    swbf::CommandPostSystem  command_posts;
+    swbf::ConquestMode       conquest;
+    swbf::WeaponSystem       weapon;
+    swbf::AISystem           ai_system;
+    swbf::HealthSystem       health;
+    swbf::VehicleSystem      vehicles;
+    swbf::Pathfinder         pathfinder;
+    swbf::LuaRuntime         lua_runtime;
+    swbf::VFS               vfs;
+
+    // -- HUD / UI ---------------------------------------------------------
+    swbf::HUD               game_hud;
+    swbf::Scoreboard         scoreboard;
+    swbf::MenuSystem         menu;
+    swbf::Team               player_team = swbf::Team::REPUBLIC;
+    bool                     game_mode_active = false;
+    float                    sim_timer = 0.0f;
 
     // Timing
     uint32_t last_tick_ms     = 0;
@@ -1144,6 +1188,10 @@ struct AppState {
     static constexpr float MOUSE_SENS  = 0.002f;   // radians per pixel
 
     bool running = true;
+
+    // -- Vehicle state ----------------------------------------------------
+    bool player_in_vehicle  = false;
+    uint32_t player_vehicle = 0;
 
     // -- Phase 1: LVL asset loading state ---------------------------------
     std::string data_dir;            // --data-dir path, empty = procedural demo
@@ -1827,10 +1875,49 @@ int main(int argc, char* argv[]) {
         LOG_WARN("Failed to initialise particle renderer — continuing without particles.");
     }
 
+    // -- Audio manager (high-level) ----------------------------------------
+    if (!g_app.audio_mgr.init()) {
+        LOG_WARN("AudioManager init failed — continuing without managed audio.");
+    }
+
+    // -- Game systems init ------------------------------------------------
+    g_app.entity_manager.init();
+    g_app.command_posts.init();
+    g_app.ai_system.init(&g_app.entity_manager, &g_app.command_posts,
+                         &g_app.pathfinder, &g_app.physics);
+    g_app.pathfinder.init();
+    g_app.vehicles.init();
+
+    // -- Game systems service locator (for Lua API) -----------------------
+    {
+        auto& sys = swbf::GameSystems::instance();
+        sys.entity_manager      = &g_app.entity_manager;
+        sys.spawn_system        = &g_app.spawn_system;
+        sys.command_post_system = &g_app.command_posts;
+        sys.conquest_mode       = &g_app.conquest;
+        sys.weapon_system       = &g_app.weapon;
+        sys.ai_system           = &g_app.ai_system;
+        sys.audio_device        = &g_app.audio;
+        sys.camera              = &g_app.camera;
+        sys.vfs                 = &g_app.vfs;
+    }
+
+    // -- Lua scripting runtime --------------------------------------------
+    g_app.lua_runtime.init();
+    swbf::register_swbf_api(g_app.lua_runtime);
+
     // -- HUD overlay ------------------------------------------------------
     if (!init_hud()) {
         LOG_WARN("Failed to initialise HUD — continuing without overlay.");
     }
+
+    // -- Game HUD (Phase 2: full UI stack) --------------------------------
+    if (!g_app.game_hud.init()) {
+        LOG_WARN("Failed to initialise game HUD — continuing without game UI.");
+    }
+
+    // -- Menu system ------------------------------------------------------
+    g_app.menu.init();
 
     // -- Asset loading (Phase 1 or procedural fallback) -------------------
     if (!g_app.data_dir.empty()) {
@@ -1901,11 +1988,27 @@ int main(int argc, char* argv[]) {
     // -- Cleanup ----------------------------------------------------------
     destroy_terrain();
     destroy_hud();
+    g_app.game_hud.destroy();
     destroy_lvl_models(g_app.gpu_models);
     destroy_model_shader();
     g_app.particles.clear();
     g_app.particle_renderer.destroy();
     g_app.sky.destroy();
+
+    // Shutdown game systems.
+    g_app.lua_runtime.shutdown();
+    swbf::GameSystems::instance().clear();
+    g_app.vehicles.shutdown();
+    g_app.pathfinder.shutdown();
+    g_app.ai_system.shutdown();
+    g_app.command_posts.shutdown();
+    g_app.entity_manager.shutdown();
+    g_app.spawn_system.clear();
+    g_app.conquest.clear();
+    g_app.weapon.clear();
+    g_app.health.clear();
+
+    g_app.audio_mgr.shutdown();
     g_app.audio.shutdown();
 
     LOG_INFO("OpenSWBF shut down cleanly.");

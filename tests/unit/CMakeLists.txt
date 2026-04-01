@@ -43,12 +43,20 @@ add_executable(openswbf_tests
     test_chunk_reader.cpp
     test_odf_parser.cpp
     test_camera.cpp
+    test_entity_manager.cpp
+    test_ai_system.cpp
+    test_command_post_system.cpp
+    test_conquest_mode.cpp
+    test_health_system.cpp
+    test_spawn_system.cpp
+    test_weapon_system.cpp
 )
 
 target_link_libraries(openswbf_tests
     PRIVATE
         openswbf_core
         openswbf_assets
+        openswbf_game
         gtest_main
 )
 

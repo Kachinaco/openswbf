@@ -36,6 +36,11 @@ struct Entity {
 
     // Is this entity the player?
     bool is_player = false;
+
+    // Scoreboard stats.
+    int kills  = 0;
+    int deaths = 0;
+    int score  = 0;
 };
 
 } // namespace swbf
