@@ -17,10 +17,13 @@ class LuaRuntime;
 ///   SetConquestMode
 ///   SetSpawnDelay
 ///   EnableSPHeroRules, SetMaxFlyHeight
+///   SetAttackingTeam, SetDefendingTeam, AllowAISpawn
+///   SetTeamAsEnemy, SetTeamAsFriend, SetMinFlyHeight
+///   SetMaxPlayerCount, SetTeamIcon
 ///
-/// Each function is a static C callback that accesses game systems through
-/// the GameSystems singleton.  Call register_swbf_api() after GameSystems
-/// pointers have been set.
+/// Each function is a lua_CFunction callback that accesses game systems
+/// through the GameSystems singleton.  Call register_swbf_api() after
+/// GameSystems pointers have been set and the Lua state is initialized.
 void register_swbf_api(LuaRuntime& runtime);
 
 } // namespace swbf

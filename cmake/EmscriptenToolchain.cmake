@@ -10,15 +10,17 @@
 set(EMSCRIPTEN_SDL2_FLAGS "-sUSE_SDL=2")
 
 # ---------------------------------------------------------------------------
-# WebGL 1 (OpenGL ES 2.0)
+# WebGL 1 (OpenGL ES 2.0) with fallback to WebGL 2
 # ---------------------------------------------------------------------------
-set(EMSCRIPTEN_GL_FLAGS "-sMAX_WEBGL_VERSION=1 -sMIN_WEBGL_VERSION=1 -sFULL_ES2=1")
+set(EMSCRIPTEN_GL_FLAGS "-sMAX_WEBGL_VERSION=2 -sMIN_WEBGL_VERSION=1 -sFULL_ES2=1 -sFULL_ES3=1")
 
 # ---------------------------------------------------------------------------
 # Memory
 # ---------------------------------------------------------------------------
 set(EMSCRIPTEN_MEMORY_FLAGS
-    "-sINITIAL_MEMORY=67108864"    # 64 MiB fixed
+    "-sINITIAL_MEMORY=268435456"   # 256 MiB initial (mobile-friendly)
+    "-sALLOW_MEMORY_GROWTH=1"      # Allow growth for large asset loads
+    "-sMAXIMUM_MEMORY=2147483648"   # 2 GiB max
 )
 
 # ---------------------------------------------------------------------------
@@ -27,7 +29,9 @@ set(EMSCRIPTEN_MEMORY_FLAGS
 set(EMSCRIPTEN_FETCH_FLAGS "")
 
 # ---------------------------------------------------------------------------
-# Audio — OpenAL via Emscripten ports
+# Audio — OpenAL is linked but NOT initialized at startup.
+# The AudioManager defers alcOpenDevice/alcCreateContext until after the
+# first user interaction (click/keypress) to satisfy browser autoplay policy.
 # ---------------------------------------------------------------------------
 set(EMSCRIPTEN_AUDIO_FLAGS "-lopenal")
 

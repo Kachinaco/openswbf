@@ -20,6 +20,7 @@ enum class TextureFormat : uint32_t {
     RGBA8  = 0,   // 32-bit uncompressed (A8R8G8B8 in D3D notation)
     DXT1   = 1,   // BC1 — 4:1 compression, 1-bit alpha
     DXT3   = 3,   // BC2 — 4:1 compression, explicit 4-bit alpha
+    DXT5   = 4,   // BC3 — 4:1 compression, interpolated 8-bit alpha
     R5G6B5 = 5,   // 16-bit uncompressed, no alpha
     A4R4G4B4 = 6, // 16-bit uncompressed, 4-bit alpha
     A8R8G8B8 = 7, // Same as RGBA8 but in D3D-native channel order
@@ -88,6 +89,10 @@ private:
 
     // Decode DXT3 (BC2) compressed data into RGBA8.
     static std::vector<uint8_t> decode_dxt3(const uint8_t* src,
+                                            uint32_t width, uint32_t height);
+
+    // Decode DXT5 (BC3) compressed data into RGBA8.
+    static std::vector<uint8_t> decode_dxt5(const uint8_t* src,
                                             uint32_t width, uint32_t height);
 
     // Convert R5G6B5 (16-bit) data to RGBA8.

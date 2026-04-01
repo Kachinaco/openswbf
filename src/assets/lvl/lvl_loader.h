@@ -1,16 +1,24 @@
 #pragma once
 
+#include "assets/lvl/animation_loader.h"
+#include "assets/lvl/effects_loader.h"
 #include "assets/lvl/entity_class_loader.h"
+#include "assets/lvl/font_loader.h"
+#include "assets/lvl/hud_loader.h"
 #include "assets/lvl/light_loader.h"
 #include "assets/lvl/model_loader.h"
+#include "assets/lvl/music_loader.h"
 #include "assets/lvl/path_loader.h"
 #include "assets/lvl/script_loader.h"
 #include "assets/lvl/skeleton_loader.h"
+#include "assets/lvl/sky_loader.h"
 #include "assets/lvl/sound_loader.h"
 #include "assets/lvl/terrain_loader.h"
 #include "assets/lvl/texture_loader.h"
+#include "assets/lvl/world_loader.h"
 #include "core/filesystem.h"
 #include "core/types.h"
+#include "game/animation.h"
 
 #include <cstdint>
 #include <string>
@@ -64,6 +72,16 @@ public:
     const std::vector<Sound>& sounds() const { return m_sounds; }
     const std::vector<Script>& scripts() const { return m_scripts; }
     const std::vector<LocalizationTable>& localizations() const { return m_localizations; }
+    const std::vector<AnimClip>& animations() const { return m_animations; }
+    const std::vector<WorldData>& worlds() const { return m_worlds; }
+    const std::vector<SkyData>& skies() const { return m_skies; }
+    const std::vector<EffectData>& effects() const { return m_effects; }
+    const std::vector<HudLayout>& hud_layouts() const { return m_hud_layouts; }
+    const std::vector<MusicTrack>& music_tracks() const { return m_music_tracks; }
+    const std::vector<FontData>& fonts() const { return m_fonts; }
+
+    /// Convenience: returns all world instances from all wrld chunks.
+    std::vector<WorldInstance> all_instances() const;
 
     // Total number of assets loaded (across all types).
     std::size_t asset_count() const;
@@ -85,6 +103,13 @@ private:
     std::vector<Sound>              m_sounds;
     std::vector<Script>             m_scripts;
     std::vector<LocalizationTable>  m_localizations;
+    std::vector<AnimClip>           m_animations;
+    std::vector<WorldData>          m_worlds;
+    std::vector<SkyData>            m_skies;
+    std::vector<EffectData>         m_effects;
+    std::vector<HudLayout>          m_hud_layouts;
+    std::vector<MusicTrack>         m_music_tracks;
+    std::vector<FontData>           m_fonts;
 };
 
 } // namespace swbf

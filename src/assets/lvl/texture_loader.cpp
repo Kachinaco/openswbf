@@ -30,6 +30,7 @@ TextureFormat classify_format(uint32_t raw_fmt) {
         case 0:  return TextureFormat::RGBA8;      // Uncompressed RGBA
         case 1:  return TextureFormat::DXT1;
         case 3:  return TextureFormat::DXT3;
+        case 4:  return TextureFormat::DXT5;
         case 5:  return TextureFormat::R5G6B5;
         case 6:  return TextureFormat::A4R4G4B4;
         case 7:  return TextureFormat::A8R8G8B8;
@@ -204,6 +205,119 @@ std::vector<uint8_t> TextureLoader::decode_dxt3(const uint8_t* src,
 }
 
 // ---------------------------------------------------------------------------
+// DXT5 (BC3) decoder
+//
+// Each 4x4 block is 16 bytes:
+//   [8 bytes interpolated alpha] [8 bytes DXT1-style color block]
+//
+// Alpha block layout:
+//   byte 0: alpha0 (8-bit endpoint)
+//   byte 1: alpha1 (8-bit endpoint)
+//   bytes 2-7: 16 x 3-bit alpha indices packed into 48 bits
+//
+// If alpha0 > alpha1: 8 alpha values (6 interpolated between endpoints)
+// If alpha0 <= alpha1: 6 alpha values (4 interpolated) + 0 and 255
+//
+// Color block is identical to DXT1 but always uses 4-color mode.
+// ---------------------------------------------------------------------------
+
+std::vector<uint8_t> TextureLoader::decode_dxt5(const uint8_t* src,
+                                                 uint32_t width,
+                                                 uint32_t height) {
+    const uint32_t bw = (width  + 3) / 4;
+    const uint32_t bh = (height + 3) / 4;
+
+    std::vector<uint8_t> out(width * height * 4, 0);
+
+    for (uint32_t by = 0; by < bh; ++by) {
+        for (uint32_t bx = 0; bx < bw; ++bx) {
+            const uint8_t* block = src + (by * bw + bx) * 16;
+            const uint8_t* alpha_block = block;
+            const uint8_t* color_block = block + 8;
+
+            // -- Decode alpha endpoints and build 8-entry alpha palette --
+            uint8_t alpha0 = alpha_block[0];
+            uint8_t alpha1 = alpha_block[1];
+
+            uint8_t alpha_palette[8];
+            alpha_palette[0] = alpha0;
+            alpha_palette[1] = alpha1;
+
+            if (alpha0 > alpha1) {
+                // 6 interpolated values
+                alpha_palette[2] = static_cast<uint8_t>((6 * alpha0 + 1 * alpha1 + 3) / 7);
+                alpha_palette[3] = static_cast<uint8_t>((5 * alpha0 + 2 * alpha1 + 3) / 7);
+                alpha_palette[4] = static_cast<uint8_t>((4 * alpha0 + 3 * alpha1 + 3) / 7);
+                alpha_palette[5] = static_cast<uint8_t>((3 * alpha0 + 4 * alpha1 + 3) / 7);
+                alpha_palette[6] = static_cast<uint8_t>((2 * alpha0 + 5 * alpha1 + 3) / 7);
+                alpha_palette[7] = static_cast<uint8_t>((1 * alpha0 + 6 * alpha1 + 3) / 7);
+            } else {
+                // 4 interpolated values + explicit 0 and 255
+                alpha_palette[2] = static_cast<uint8_t>((4 * alpha0 + 1 * alpha1 + 2) / 5);
+                alpha_palette[3] = static_cast<uint8_t>((3 * alpha0 + 2 * alpha1 + 2) / 5);
+                alpha_palette[4] = static_cast<uint8_t>((2 * alpha0 + 3 * alpha1 + 2) / 5);
+                alpha_palette[5] = static_cast<uint8_t>((1 * alpha0 + 4 * alpha1 + 2) / 5);
+                alpha_palette[6] = 0;
+                alpha_palette[7] = 255;
+            }
+
+            // Unpack 48 bits of 3-bit alpha indices from bytes 2..7.
+            // The 48 bits are packed LSB-first across 6 bytes.
+            uint64_t alpha_bits = 0;
+            for (int i = 0; i < 6; ++i) {
+                alpha_bits |= static_cast<uint64_t>(alpha_block[2 + i]) << (8 * i);
+            }
+
+            // -- Decode color block (same as DXT1, always 4-color mode) --
+            uint16_t c0, c1;
+            std::memcpy(&c0, color_block + 0, 2);
+            std::memcpy(&c1, color_block + 2, 2);
+
+            uint8_t r0, g0, b0, r1, g1, b1;
+            unpack_rgb565(c0, r0, g0, b0);
+            unpack_rgb565(c1, r1, g1, b1);
+
+            uint8_t palette[4][3];
+            palette[0][0] = r0; palette[0][1] = g0; palette[0][2] = b0;
+            palette[1][0] = r1; palette[1][1] = g1; palette[1][2] = b1;
+            palette[2][0] = static_cast<uint8_t>((2 * r0 + r1 + 1) / 3);
+            palette[2][1] = static_cast<uint8_t>((2 * g0 + g1 + 1) / 3);
+            palette[2][2] = static_cast<uint8_t>((2 * b0 + b1 + 1) / 3);
+            palette[3][0] = static_cast<uint8_t>((r0 + 2 * r1 + 1) / 3);
+            palette[3][1] = static_cast<uint8_t>((g0 + 2 * g1 + 1) / 3);
+            palette[3][2] = static_cast<uint8_t>((b0 + 2 * b1 + 1) / 3);
+
+            uint32_t color_indices;
+            std::memcpy(&color_indices, color_block + 4, 4);
+
+            for (uint32_t row = 0; row < 4; ++row) {
+                for (uint32_t col = 0; col < 4; ++col) {
+                    uint32_t px = bx * 4 + col;
+                    uint32_t py = by * 4 + row;
+                    if (px >= width || py >= height) continue;
+
+                    // Color index: 2 bits per texel
+                    uint32_t cbit = (row * 4 + col) * 2;
+                    uint32_t cidx = (color_indices >> cbit) & 0x3;
+
+                    // Alpha index: 3 bits per texel
+                    uint32_t abit = (row * 4 + col) * 3;
+                    uint32_t aidx = static_cast<uint32_t>((alpha_bits >> abit) & 0x7);
+
+                    std::size_t offset = (py * width + px) * 4;
+                    out[offset + 0] = palette[cidx][0];
+                    out[offset + 1] = palette[cidx][1];
+                    out[offset + 2] = palette[cidx][2];
+                    out[offset + 3] = alpha_palette[aidx];
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // R5G6B5 -> RGBA8
 // ---------------------------------------------------------------------------
 
@@ -295,6 +409,9 @@ std::vector<uint8_t> TextureLoader::decode_pixels(const uint8_t* src,
 
         case TextureFormat::DXT3:
             return decode_dxt3(src, width, height);
+
+        case TextureFormat::DXT5:
+            return decode_dxt5(src, width, height);
 
         case TextureFormat::R5G6B5:
             return decode_r5g6b5(src, width, height);

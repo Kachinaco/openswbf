@@ -16,6 +16,7 @@ target_include_directories(openswbf_audio
 target_link_libraries(openswbf_audio
     PUBLIC
         openswbf_core
+        openswbf_input
 )
 
 if(NOT EMSCRIPTEN)

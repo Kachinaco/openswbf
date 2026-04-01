@@ -41,12 +41,15 @@ bool LVLLoader::load(const std::vector<uint8_t>& data) {
     }
 
     LOG_INFO("LVLLoader: loaded %zu textures, %zu models, %zu terrains, "
-             "%zu entity classes, %zu skeletons, %zu lights, %zu paths, "
-             "%zu sounds, %zu scripts, %zu localizations",
+             "%zu entity classes, %zu skeletons, %zu animations, %zu lights, "
+             "%zu paths, %zu sounds, %zu scripts, %zu localizations, "
+             "%zu worlds, %zu skies, %zu effects, %zu HUDs, %zu music, %zu fonts",
              m_textures.size(), m_models.size(), m_terrains.size(),
-             m_entity_classes.size(), m_skeletons.size(), m_lights.size(),
-             m_paths.size(), m_sounds.size(), m_scripts.size(),
-             m_localizations.size());
+             m_entity_classes.size(), m_skeletons.size(), m_animations.size(),
+             m_lights.size(), m_paths.size(), m_sounds.size(), m_scripts.size(),
+             m_localizations.size(), m_worlds.size(), m_skies.size(),
+             m_effects.size(), m_hud_layouts.size(), m_music_tracks.size(),
+             m_fonts.size());
 
     return true;
 }
@@ -211,9 +214,102 @@ void LVLLoader::dispatch_chunk(ChunkReader& chunk) {
             LOG_WARN("LVLLoader: failed to load Locl chunk: %s", e.what());
         }
     }
+    else if (id == chunk_id::zaa_ || id == chunk_id::zaf_) {
+        // Animation data (animation set or animation file)
+        try {
+            const Skeleton* skel_ptr = nullptr;
+            if (!m_skeletons.empty()) {
+                skel_ptr = &m_skeletons.back();
+            }
+
+            AnimationLoader anim_loader;
+            auto clips = anim_loader.load(chunk, skel_ptr);
+            for (auto& clip : clips) {
+                LOG_DEBUG("LVLLoader: loaded animation '%s' (%.2fs, %zu tracks)",
+                          clip.name.c_str(), static_cast<double>(clip.duration),
+                          clip.tracks.size());
+                m_animations.push_back(std::move(clip));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load animation chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::wrld) {
+        // World instances (object placements)
+        try {
+            WorldLoader wrld_loader;
+            WorldData world = wrld_loader.load(chunk);
+            if (!world.instances.empty()) {
+                LOG_DEBUG("LVLLoader: loaded world '%s' (%zu instances)",
+                          world.name.c_str(), world.instances.size());
+                m_worlds.push_back(std::move(world));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load wrld chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::sky_) {
+        // Sky dome / skybox configuration
+        try {
+            SkyLoader sky_loader;
+            SkyData sky = sky_loader.load(chunk);
+            LOG_DEBUG("LVLLoader: loaded sky '%s'", sky.name.c_str());
+            m_skies.push_back(std::move(sky));
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load sky_ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::fx__) {
+        // Visual effects definition
+        try {
+            EffectsLoader fx_loader;
+            EffectData fx = fx_loader.load(chunk);
+            if (!fx.name.empty() || !fx.raw_data.empty()) {
+                LOG_DEBUG("LVLLoader: loaded effect '%s'", fx.name.c_str());
+                m_effects.push_back(std::move(fx));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load fx__ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::hud_) {
+        // HUD layout
+        try {
+            HudLoader hud_loader;
+            HudLayout hud = hud_loader.load(chunk);
+            LOG_DEBUG("LVLLoader: loaded HUD layout '%s'", hud.name.c_str());
+            m_hud_layouts.push_back(std::move(hud));
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load hud_ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::mus_) {
+        // Music / streaming audio
+        try {
+            MusicLoader mus_loader;
+            MusicTrack track = mus_loader.load(chunk);
+            if (!track.name.empty() || !track.stream_data.empty()) {
+                LOG_DEBUG("LVLLoader: loaded music track '%s'",
+                          track.name.c_str());
+                m_music_tracks.push_back(std::move(track));
+            }
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load mus_ chunk: %s", e.what());
+        }
+    }
+    else if (id == chunk_id::font) {
+        // Font / glyph atlas
+        try {
+            FontLoader font_loader;
+            FontData fnt = font_loader.load(chunk);
+            LOG_DEBUG("LVLLoader: loaded font '%s'", fnt.name.c_str());
+            m_fonts.push_back(std::move(fnt));
+        } catch (const std::exception& e) {
+            LOG_WARN("LVLLoader: failed to load font chunk: %s", e.what());
+        }
+    }
     else {
-        // Unhandled chunk type — log at TRACE level for debugging.
-        // Build a readable 4-char tag string.
+        // Unhandled chunk type -- log at TRACE level for debugging.
         char tag_str[5] = {};
         std::memcpy(tag_str, &id, 4);
         LOG_TRACE("LVLLoader: skipping unhandled chunk '%s' (%u bytes)",
@@ -227,9 +323,20 @@ void LVLLoader::dispatch_chunk(ChunkReader& chunk) {
 
 std::size_t LVLLoader::asset_count() const {
     return m_textures.size() + m_models.size() + m_terrains.size() +
-           m_entity_classes.size() + m_skeletons.size() + m_lights.size() +
-           m_paths.size() + m_sounds.size() + m_scripts.size() +
-           m_localizations.size();
+           m_entity_classes.size() + m_skeletons.size() + m_animations.size() +
+           m_lights.size() + m_paths.size() + m_sounds.size() +
+           m_scripts.size() + m_localizations.size() + m_worlds.size() +
+           m_skies.size() + m_effects.size() + m_hud_layouts.size() +
+           m_music_tracks.size() + m_fonts.size();
+}
+
+std::vector<WorldInstance> LVLLoader::all_instances() const {
+    std::vector<WorldInstance> result;
+    for (const auto& world : m_worlds) {
+        result.insert(result.end(), world.instances.begin(),
+                      world.instances.end());
+    }
+    return result;
 }
 
 void LVLLoader::clear() {
@@ -238,11 +345,18 @@ void LVLLoader::clear() {
     m_terrains.clear();
     m_entity_classes.clear();
     m_skeletons.clear();
+    m_animations.clear();
     m_lights.clear();
     m_paths.clear();
     m_sounds.clear();
     m_scripts.clear();
     m_localizations.clear();
+    m_worlds.clear();
+    m_skies.clear();
+    m_effects.clear();
+    m_hud_layouts.clear();
+    m_music_tracks.clear();
+    m_fonts.clear();
 }
 
 } // namespace swbf

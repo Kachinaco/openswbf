@@ -56,6 +56,10 @@ const std::vector<float> AnimationSystem::s_empty_matrices;
 int AnimationSystem::register_skeleton(const Skeleton& skeleton) {
     int idx = static_cast<int>(m_skeletons.size());
     m_skeletons.push_back(skeleton);
+
+    // Ensure inverse bind matrices are computed for skinning.
+    m_skeletons.back().compute_inverse_bind_matrices();
+
     LOG_INFO("AnimationSystem: registered skeleton '%s' (%zu bones, index %d)",
              skeleton.name.c_str(), skeleton.bones.size(), idx);
     return idx;

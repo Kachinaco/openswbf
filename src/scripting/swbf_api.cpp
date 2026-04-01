@@ -2,11 +2,6 @@
 //
 // Each function follows the Lua C API signature:  int func(lua_State* L)
 // They access game systems through the GameSystems singleton.
-//
-// When the real Lua runtime is integrated these functions will be registered
-// as lua_CFunction callbacks.  Until then, register_swbf_api() stores their
-// pointers via LuaRuntime::register_function() (which currently logs a stub
-// warning).
 
 #include "scripting/swbf_api.h"
 #include "scripting/lua_runtime.h"
@@ -28,47 +23,11 @@
 #include <cstring>
 #include <string>
 
-// ---------------------------------------------------------------------------
-// Lua compatibility layer
-//
-// The real Lua headers aren't linked yet.  These forward-declarations and
-// helper functions let us write correct C-API callbacks now.  When Lua 5.4
-// is linked, remove this block and #include <lua.h> / <lauxlib.h> instead.
-// ---------------------------------------------------------------------------
-
-struct lua_State;  // opaque — provided by the Lua library
-
-// Minimum stubs so the callbacks compile.  The implementations will be
-// provided by the real Lua library; for now they are weak symbols that
-// return safe defaults.  This lets us test the API registration path.
-#ifdef __GNUC__
-#define SWBF_WEAK __attribute__((weak))
-#else
-#define SWBF_WEAK
-#endif
-
-extern "C" {
-    SWBF_WEAK const char* lua_tolstring(lua_State*, int, size_t*) { return ""; }
-    SWBF_WEAK double      lua_tonumberx(lua_State*, int, int*)    { return 0.0; }
-    SWBF_WEAK int         lua_gettop(lua_State*)                  { return 0; }
-    SWBF_WEAK int         lua_toboolean(lua_State*, int)          { return 0; }
-}
-
-// Convenience wrappers matching common Lua 5.4 macros.
-static const char* lua_tostring(lua_State* L, int idx) {
-    return lua_tolstring(L, idx, nullptr);
-}
-static double lua_tonumber(lua_State* L, int idx) {
-    return lua_tonumberx(L, idx, nullptr);
-}
-
 namespace {
 
 using swbf::GameSystems;
 
-// =========================================================================
 // Helper — safely read Lua string args, returning "" if missing/nil.
-// =========================================================================
 static std::string get_string(lua_State* L, int idx) {
     const char* s = lua_tostring(L, idx);
     return s ? s : "";
@@ -84,7 +43,6 @@ static float get_float(lua_State* L, int idx) {
 
 // =========================================================================
 // 1. ReadDataFile(path)
-//    Load a .lvl file from the VFS (used in the mission preamble).
 // =========================================================================
 static int api_ReadDataFile(lua_State* L) {
     std::string path = get_string(L, 1);
@@ -108,7 +66,6 @@ static int api_ReadDataFile(lua_State* L) {
 
 // =========================================================================
 // 2. ReadDataFileInGame(path)
-//    Same as ReadDataFile but used for in-game (post-load) asset loading.
 // =========================================================================
 static int api_ReadDataFileInGame(lua_State* L) {
     std::string path = get_string(L, 1);
@@ -132,7 +89,6 @@ static int api_ReadDataFileInGame(lua_State* L) {
 
 // =========================================================================
 // 3. SetTeamName(team, name)
-//    Configure a team's human-readable name.
 // =========================================================================
 static int api_SetTeamName(lua_State* L) {
     int         team = get_int(L, 1);
@@ -148,7 +104,6 @@ static int api_SetTeamName(lua_State* L) {
 
 // =========================================================================
 // 4. AddUnitClass(team, odf_name, min_count, max_count)
-//    Register a unit class for a team.
 // =========================================================================
 static int api_AddUnitClass(lua_State* L) {
     int         team      = get_int(L, 1);
@@ -167,7 +122,6 @@ static int api_AddUnitClass(lua_State* L) {
 
 // =========================================================================
 // 5. SetHeroClass(team, odf_name)
-//    Set the hero unit for a team.
 // =========================================================================
 static int api_SetHeroClass(lua_State* L) {
     int         team = get_int(L, 1);
@@ -183,7 +137,6 @@ static int api_SetHeroClass(lua_State* L) {
 
 // =========================================================================
 // 6. SetUnitCount(team, count)
-//    Set the reinforcement count for a team.
 // =========================================================================
 static int api_SetUnitCount(lua_State* L) {
     int team  = get_int(L, 1);
@@ -199,7 +152,6 @@ static int api_SetUnitCount(lua_State* L) {
 
 // =========================================================================
 // 7. AddCommandPost(name, team)
-//    Register a command post with an owning team.
 // =========================================================================
 static int api_AddCommandPost(lua_State* L) {
     std::string name = get_string(L, 1);
@@ -215,7 +167,6 @@ static int api_AddCommandPost(lua_State* L) {
 
 // =========================================================================
 // 8. SetCommandPostTeam(name, team)
-//    Change the owning team of an existing command post.
 // =========================================================================
 static int api_SetCommandPostTeam(lua_State* L) {
     std::string name = get_string(L, 1);
@@ -231,17 +182,14 @@ static int api_SetCommandPostTeam(lua_State* L) {
 
 // =========================================================================
 // 9. SetMapNorthAngle(angle_degrees)
-//    Rotate the minimap / compass so north points in the right direction.
 // =========================================================================
 static int api_SetMapNorthAngle(lua_State* L) {
     float angle = get_float(L, 1);
     LOG_INFO("SWBF API: SetMapNorthAngle(%.1f)", static_cast<double>(angle));
 
-    // Store in config; the renderer / minimap reads it when drawing.
     auto& sys = GameSystems::instance();
     sys.config.set("map_north_angle", std::to_string(angle));
 
-    // If the camera is available, adjust its initial yaw to match.
     if (sys.camera) {
         float radians = angle * (3.14159265f / 180.0f);
         sys.config.set("map_north_angle_rad", std::to_string(radians));
@@ -251,8 +199,6 @@ static int api_SetMapNorthAngle(lua_State* L) {
 
 // =========================================================================
 // 10. SetMemoryPoolSize(pool_name, size)
-//     Configure a named memory pool (e.g. "Soldier", "CommandFlyer").
-//     This is a hint to the engine about how much memory to pre-allocate.
 // =========================================================================
 static int api_SetMemoryPoolSize(lua_State* L) {
     std::string pool_name = get_string(L, 1);
@@ -260,7 +206,6 @@ static int api_SetMemoryPoolSize(lua_State* L) {
     LOG_INFO("SWBF API: SetMemoryPoolSize(\"%s\", %d)",
              pool_name.c_str(), size);
 
-    // Store the value for systems that need to query pool sizes.
     auto& sys = GameSystems::instance();
     sys.config.set("pool_" + pool_name, std::to_string(size));
     return 0;
@@ -268,7 +213,6 @@ static int api_SetMemoryPoolSize(lua_State* L) {
 
 // =========================================================================
 // 11. SetAIViewMultiplier(multiplier)
-//     Scale the AI perception distance.
 // =========================================================================
 static int api_SetAIViewMultiplier(lua_State* L) {
     float mult = get_float(L, 1);
@@ -283,13 +227,11 @@ static int api_SetAIViewMultiplier(lua_State* L) {
 
 // =========================================================================
 // 12. OpenAudioStream(stream_path)
-//     Open an audio stream file for background music / ambient loops.
 // =========================================================================
 static int api_OpenAudioStream(lua_State* L) {
     std::string path = get_string(L, 1);
     LOG_INFO("SWBF API: OpenAudioStream(\"%s\")", path.c_str());
 
-    // Store the path; the audio subsystem will resolve and play it when ready.
     auto& sys = GameSystems::instance();
     sys.config.set("audio_stream", path);
     return 0;
@@ -297,13 +239,10 @@ static int api_OpenAudioStream(lua_State* L) {
 
 // =========================================================================
 // 13. SetAmbientMusic(segment_min, segment_max, ...)
-//     Configure ambient music segments.  Variable args specify music layer
-//     parameters (gain, segment IDs, etc.).
 // =========================================================================
 static int api_SetAmbientMusic(lua_State* L) {
     int nargs = lua_gettop(L);
 
-    // Collect all arguments as a config string.
     std::string args_str;
     for (int i = 1; i <= nargs; ++i) {
         if (i > 1) args_str += ",";
@@ -318,7 +257,6 @@ static int api_SetAmbientMusic(lua_State* L) {
 
 // =========================================================================
 // 14. SetBleedRate(rate)
-//     Set the reinforcement bleed rate for conquest mode.
 // =========================================================================
 static int api_SetBleedRate(lua_State* L) {
     float rate = get_float(L, 1);
@@ -333,7 +271,6 @@ static int api_SetBleedRate(lua_State* L) {
 
 // =========================================================================
 // 15. SetSoundEffect(effect_name, sound_path)
-//     Bind a named sound effect to a sound file path.
 // =========================================================================
 static int api_SetSoundEffect(lua_State* L) {
     std::string effect = get_string(L, 1);
@@ -341,7 +278,6 @@ static int api_SetSoundEffect(lua_State* L) {
     LOG_INFO("SWBF API: SetSoundEffect(\"%s\", \"%s\")",
              effect.c_str(), path.c_str());
 
-    // Store the mapping; the audio system reads it when playing effects.
     auto& sys = GameSystems::instance();
     sys.config.set("sfx_" + effect, path);
     return 0;
@@ -349,11 +285,8 @@ static int api_SetSoundEffect(lua_State* L) {
 
 // =========================================================================
 // 16. SetConquestMode(enabled)
-//     Activate or deactivate conquest mode.
 // =========================================================================
 static int api_SetConquestMode(lua_State* L) {
-    // SWBF scripts call SetConquestMode("on") or with a boolean.
-    // Check both string and boolean forms.
     std::string arg = get_string(L, 1);
     bool enable = (arg == "on" || arg == "1" || arg == "true"
                    || lua_toboolean(L, 1));
@@ -375,7 +308,6 @@ static int api_SetConquestMode(lua_State* L) {
 
 // =========================================================================
 // 17. SetSpawnDelay(seconds)
-//     Set the delay between death and respawn.
 // =========================================================================
 static int api_SetSpawnDelay(lua_State* L) {
     float seconds = get_float(L, 1);
@@ -390,7 +322,6 @@ static int api_SetSpawnDelay(lua_State* L) {
 
 // =========================================================================
 // 18. EnableSPHeroRules()
-//     Turn on single-player hero rules (hero spawns at specific conditions).
 // =========================================================================
 static int api_EnableSPHeroRules(lua_State* /*L*/) {
     LOG_INFO("SWBF API: EnableSPHeroRules()");
@@ -404,7 +335,6 @@ static int api_EnableSPHeroRules(lua_State* /*L*/) {
 
 // =========================================================================
 // 19. SetMaxFlyHeight(height)
-//     Set the maximum altitude for flying vehicles.
 // =========================================================================
 static int api_SetMaxFlyHeight(lua_State* L) {
     float height = get_float(L, 1);
@@ -416,13 +346,8 @@ static int api_SetMaxFlyHeight(lua_State* L) {
 }
 
 // =========================================================================
-// 20-27: Additional mission API stubs found in SWBF scripts.
-//
-// Some scripts call extra helper functions.  We define them all so
-// mission scripts don't error out on unresolved globals.
-// =========================================================================
-
 // 20. SetAttackingTeam(team)
+// =========================================================================
 static int api_SetAttackingTeam(lua_State* L) {
     int team = get_int(L, 1);
     LOG_INFO("SWBF API: SetAttackingTeam(%d)", team);
@@ -430,7 +355,9 @@ static int api_SetAttackingTeam(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 21. SetDefendingTeam(team)
+// =========================================================================
 static int api_SetDefendingTeam(lua_State* L) {
     int team = get_int(L, 1);
     LOG_INFO("SWBF API: SetDefendingTeam(%d)", team);
@@ -438,7 +365,9 @@ static int api_SetDefendingTeam(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 22. AllowAISpawn(team, enabled)
+// =========================================================================
 static int api_AllowAISpawn(lua_State* L) {
     int team = get_int(L, 1);
     int enabled = lua_toboolean(L, 2);
@@ -448,18 +377,21 @@ static int api_AllowAISpawn(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 23. SetTeamAsEnemy(team_a, team_b)
+// =========================================================================
 static int api_SetTeamAsEnemy(lua_State* L) {
     int a = get_int(L, 1);
     int b = get_int(L, 2);
     LOG_INFO("SWBF API: SetTeamAsEnemy(%d, %d)", a, b);
-    // Store the relationship; the AI/targeting system reads this.
     std::string key = "enemy_" + std::to_string(a) + "_" + std::to_string(b);
     GameSystems::instance().config.set(key, "1");
     return 0;
 }
 
+// =========================================================================
 // 24. SetTeamAsFriend(team_a, team_b)
+// =========================================================================
 static int api_SetTeamAsFriend(lua_State* L) {
     int a = get_int(L, 1);
     int b = get_int(L, 2);
@@ -469,7 +401,9 @@ static int api_SetTeamAsFriend(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 25. SetMinFlyHeight(height)
+// =========================================================================
 static int api_SetMinFlyHeight(lua_State* L) {
     float height = get_float(L, 1);
     LOG_INFO("SWBF API: SetMinFlyHeight(%.1f)", static_cast<double>(height));
@@ -477,7 +411,9 @@ static int api_SetMinFlyHeight(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 26. SetMaxPlayerCount(count)
+// =========================================================================
 static int api_SetMaxPlayerCount(lua_State* L) {
     int count = get_int(L, 1);
     LOG_INFO("SWBF API: SetMaxPlayerCount(%d)", count);
@@ -485,7 +421,9 @@ static int api_SetMaxPlayerCount(lua_State* L) {
     return 0;
 }
 
+// =========================================================================
 // 27. SetTeamIcon(team, icon_texture)
+// =========================================================================
 static int api_SetTeamIcon(lua_State* L) {
     int         team = get_int(L, 1);
     std::string icon = get_string(L, 2);
@@ -507,9 +445,8 @@ namespace swbf {
 void register_swbf_api(LuaRuntime& runtime) {
     LOG_INFO("Registering SWBF mission API (27 functions)...");
 
-    // Helper macro to reduce repetition.
     #define REG(name) \
-        runtime.register_function(#name, reinterpret_cast<void*>(&api_##name))
+        runtime.register_function(#name, api_##name)
 
     // Asset loading
     REG(ReadDataFile);

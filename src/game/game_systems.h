@@ -42,6 +42,7 @@ struct GameSystems {
     WeaponSystem*       weapon_system       = nullptr;
     AISystem*           ai_system           = nullptr;
     AudioDevice*        audio_device        = nullptr;
+    AudioManager*       audio_manager       = nullptr;
     Camera*             camera              = nullptr;
     VFS*                vfs                 = nullptr;
 

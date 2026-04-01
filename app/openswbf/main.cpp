@@ -17,6 +17,7 @@
 #include "input/input_system.h"
 #include "audio/audio_device.h"
 #include "audio/audio_manager.h"
+#include "audio/game_audio.h"
 #include "core/log.h"
 #include "core/filesystem.h"
 #include "assets/lvl/lvl_loader.h"
@@ -35,6 +36,7 @@
 #include "game/hud.h"
 #include "game/scoreboard.h"
 #include "game/menu.h"
+#include "game/player_controller.h"
 #include "physics/physics_world.h"
 
 // Scripting
@@ -689,6 +691,12 @@ struct LvlGPUSegment {
 struct LvlGPUModel {
     std::string name;
     std::vector<LvlGPUSegment> segments;
+    float world_transform[16] = {
+        1.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, 0.0f, 1.0f
+    };
 };
 
 uint32_t g_model_program = 0;
@@ -702,6 +710,7 @@ attribute vec3 a_normal;
 attribute vec2 a_uv;
 attribute vec4 a_color;
 
+uniform mat4 u_model;
 uniform mat4 u_view;
 uniform mat4 u_projection;
 
@@ -711,11 +720,13 @@ varying vec4 v_color;
 varying vec3 v_world_pos;
 
 void main() {
-    v_normal    = a_normal;
+    vec4 world_pos = u_model * vec4(a_position, 1.0);
+    mat3 normal_mat = mat3(u_model);
+    v_normal    = normalize(normal_mat * a_normal);
     v_uv        = a_uv;
     v_color     = a_color;
-    v_world_pos = a_position;
-    gl_Position = u_projection * u_view * vec4(a_position, 1.0);
+    v_world_pos = world_pos.xyz;
+    gl_Position = u_projection * u_view * world_pos;
 }
 )";
 
@@ -898,6 +909,9 @@ LvlGPUModel upload_lvl_model(
         if (seg.material_index < model.materials.size()) {
             const auto& mat = model.materials[seg.material_index];
             gseg.texture = find_or_upload(mat.textures[0]);
+        } else if (!seg.texture_name.empty()) {
+            // Munged model format: texture name is on the segment directly.
+            gseg.texture = find_or_upload(seg.texture_name);
         }
 
         // Convert vertices: expand packed uint32 color to float[4].
@@ -913,10 +927,10 @@ LvlGPUModel upload_lvl_model(
             mv.normal[2]   = v.normal[2];
             mv.uv[0]       = v.uv[0];
             mv.uv[1]       = v.uv[1];
-            mv.color[0] = static_cast<float>((v.color >>  0) & 0xFF) / 255.0f;
-            mv.color[1] = static_cast<float>((v.color >>  8) & 0xFF) / 255.0f;
-            mv.color[2] = static_cast<float>((v.color >> 16) & 0xFF) / 255.0f;
-            mv.color[3] = static_cast<float>((v.color >> 24) & 0xFF) / 255.0f;
+            mv.color[0] = static_cast<float>(v.color[0]) / 255.0f;
+            mv.color[1] = static_cast<float>(v.color[1]) / 255.0f;
+            mv.color[2] = static_cast<float>(v.color[2]) / 255.0f;
+            mv.color[3] = static_cast<float>(v.color[3]) / 255.0f;
             verts.push_back(mv);
         }
 
@@ -971,6 +985,7 @@ void render_lvl_models(const std::vector<LvlGPUModel>& models,
 
     glUseProgram(g_model_program);
 
+    GLint loc_model   = glGetUniformLocation(g_model_program, "u_model");
     GLint loc_view    = glGetUniformLocation(g_model_program, "u_view");
     GLint loc_proj    = glGetUniformLocation(g_model_program, "u_projection");
     GLint loc_tex     = glGetUniformLocation(g_model_program, "u_texture");
@@ -981,6 +996,11 @@ void render_lvl_models(const std::vector<LvlGPUModel>& models,
     if (loc_tex  >= 0) glUniform1i(loc_tex, 0);  // texture unit 0
 
     for (const auto& model : models) {
+        // Set per-model world transform.
+        if (loc_model >= 0) {
+            glUniformMatrix4fv(loc_model, 1, GL_FALSE, model.world_transform);
+        }
+
         for (const auto& seg : model.segments) {
             if (seg.vao == 0 || seg.index_count == 0) continue;
 
@@ -1151,6 +1171,7 @@ struct AppState {
     swbf::InputSystem        input;
     swbf::AudioDevice        audio;
     swbf::AudioManager       audio_mgr;
+    swbf::GameAudio          game_audio;
     swbf::SkyRenderer        sky;
     swbf::Camera             camera;
     swbf::ParticleSystem     particles;
@@ -1188,6 +1209,10 @@ struct AppState {
     static constexpr float MOUSE_SENS  = 0.002f;   // radians per pixel
 
     bool running = true;
+
+    // -- Player controller ------------------------------------------------
+    swbf::PlayerController   player;
+    bool player_mode = true;         // true = soldier controls, false = free-fly
 
     // -- Vehicle state ----------------------------------------------------
     bool player_in_vehicle  = false;
@@ -1271,35 +1296,48 @@ static void frame_tick() {
         g_app.show_help = !g_app.show_help;
     }
 
-    // -- Camera movement --------------------------------------------------
-    float speed = AppState::MOVE_SPEED * dt;
-
-    // Hold Ctrl to go faster.
-    if (g_app.input.key_down(SDL_SCANCODE_LCTRL) ||
-        g_app.input.key_down(SDL_SCANCODE_RCTRL)) {
-        speed *= 3.0f;
+    // F2 toggles between player mode and free-fly camera.
+    if (g_app.input.key_pressed(SDL_SCANCODE_F2)) {
+        g_app.player_mode = !g_app.player_mode;
+        LOG_INFO("Camera mode: %s", g_app.player_mode ? "player" : "free-fly");
     }
 
-    if (g_app.input.key_down(SDL_SCANCODE_W))
-        g_app.camera.move_forward(speed);
-    if (g_app.input.key_down(SDL_SCANCODE_S))
-        g_app.camera.move_forward(-speed);
-    if (g_app.input.key_down(SDL_SCANCODE_A))
-        g_app.camera.move_right(-speed);
-    if (g_app.input.key_down(SDL_SCANCODE_D))
-        g_app.camera.move_right(speed);
-    if (g_app.input.key_down(SDL_SCANCODE_SPACE))
-        g_app.camera.move_up(speed);
-    if (g_app.input.key_down(SDL_SCANCODE_LSHIFT) ||
-        g_app.input.key_down(SDL_SCANCODE_RSHIFT))
-        g_app.camera.move_up(-speed);
+    // -- Camera / movement ------------------------------------------------
+    if (g_app.player_mode) {
+        // Player controller handles movement, camera, and firing.
+        g_app.player.update(dt, g_app.input, g_app.camera,
+                            g_app.physics, g_app.entity_manager,
+                            g_app.health, g_app.weapon,
+                            g_app.spawn_system, &g_app.particles);
+    } else {
+        // Free-fly debug camera (original behavior).
+        float speed = AppState::MOVE_SPEED * dt;
 
-    // Mouse look (only when pointer is locked).
-    if (g_app.input.pointer_locked()) {
-        float dx = g_app.input.mouse_dx();
-        float dy = g_app.input.mouse_dy();
-        g_app.camera.rotate(-dy * AppState::MOUSE_SENS,
-                             dx * AppState::MOUSE_SENS);
+        if (g_app.input.key_down(SDL_SCANCODE_LCTRL) ||
+            g_app.input.key_down(SDL_SCANCODE_RCTRL)) {
+            speed *= 3.0f;
+        }
+
+        if (g_app.input.key_down(SDL_SCANCODE_W))
+            g_app.camera.move_forward(speed);
+        if (g_app.input.key_down(SDL_SCANCODE_S))
+            g_app.camera.move_forward(-speed);
+        if (g_app.input.key_down(SDL_SCANCODE_A))
+            g_app.camera.move_right(-speed);
+        if (g_app.input.key_down(SDL_SCANCODE_D))
+            g_app.camera.move_right(speed);
+        if (g_app.input.key_down(SDL_SCANCODE_SPACE))
+            g_app.camera.move_up(speed);
+        if (g_app.input.key_down(SDL_SCANCODE_LSHIFT) ||
+            g_app.input.key_down(SDL_SCANCODE_RSHIFT))
+            g_app.camera.move_up(-speed);
+
+        if (g_app.input.pointer_locked()) {
+            float dx = g_app.input.mouse_dx();
+            float dy = g_app.input.mouse_dy();
+            g_app.camera.rotate(-dy * AppState::MOUSE_SENS,
+                                 dx * AppState::MOUSE_SENS);
+        }
     }
 
     g_app.camera.update(dt);
@@ -1307,31 +1345,69 @@ static void frame_tick() {
     // -- Particle system update -------------------------------------------
     g_app.particles.update(dt);
 
-    // -- Particle demo effects (P key to spawn explosion at camera) -------
-    if (g_app.input.key_pressed(SDL_SCANCODE_P)) {
-        swbf::effects::explosion(g_app.particles,
-                                  g_app.camera.x(),
-                                  g_app.camera.y() - 5.0f,
-                                  g_app.camera.z() - 15.0f);
-        LOG_INFO("Particle demo: explosion spawned");
+    // -- Reload weapon (R key) -----------------------------------------------
+    if (g_app.player_mode && g_app.input.key_pressed(SDL_SCANCODE_R)) {
+        g_app.weapon.reload();
     }
-    // E key: sparks at a point ahead of the camera
-    if (g_app.input.key_pressed(SDL_SCANCODE_E)) {
-        swbf::effects::sparks(g_app.particles,
-                               g_app.camera.x(),
-                               g_app.camera.y() - 3.0f,
-                               g_app.camera.z() - 10.0f,
-                               0.0f, 1.0f, 0.0f);
-        LOG_INFO("Particle demo: sparks spawned");
+
+    // -- Projectile update (weapon system) ------------------------------------
+    if (g_app.player_mode) {
+        // Weapon fire sound.
+        if (g_app.player.fired_this_frame()) {
+            const float* pos = g_app.player.position();
+            g_app.game_audio.on_weapon_fire(pos[0], pos[1], pos[2]);
+        }
+
+        auto hits = g_app.weapon.update(dt, g_app.entity_manager);
+        for (const auto& hit : hits) {
+            g_app.health.damage(hit.target, hit.damage);
+            swbf::effects::sparks(g_app.particles,
+                                   hit.hit_pos[0], hit.hit_pos[1], hit.hit_pos[2],
+                                   0.0f, 1.0f, 0.0f);
+            // Impact sound at hit location.
+            g_app.game_audio.on_impact(hit.hit_pos[0], hit.hit_pos[1], hit.hit_pos[2]);
+
+            // If the entity died from this hit, play explosion.
+            if (g_app.health.is_dead(hit.target)) {
+                g_app.game_audio.on_explosion(hit.hit_pos[0], hit.hit_pos[1], hit.hit_pos[2]);
+            }
+        }
+
+        // Player death sound.
+        if (g_app.player.died_this_frame()) {
+            const float* pos = g_app.player.position();
+            g_app.game_audio.on_explosion(pos[0], pos[1], pos[2]);
+        }
     }
-    // M key: muzzle flash at a point ahead of the camera
-    if (g_app.input.key_pressed(SDL_SCANCODE_M)) {
-        swbf::effects::muzzle_flash(g_app.particles,
-                                     g_app.camera.x(),
-                                     g_app.camera.y(),
-                                     g_app.camera.z() - 2.0f,
-                                     0.0f, 0.0f, -1.0f);
-        LOG_INFO("Particle demo: muzzle flash spawned");
+
+    // -- Particle demo effects (only in free-fly mode) -----------------------
+    if (!g_app.player_mode) {
+        if (g_app.input.key_pressed(SDL_SCANCODE_P)) {
+            swbf::effects::explosion(g_app.particles,
+                                      g_app.camera.x(),
+                                      g_app.camera.y() - 5.0f,
+                                      g_app.camera.z() - 15.0f);
+            g_app.game_audio.on_explosion(g_app.camera.x(),
+                                           g_app.camera.y() - 5.0f,
+                                           g_app.camera.z() - 15.0f);
+            LOG_INFO("Particle demo: explosion spawned");
+        }
+        if (g_app.input.key_pressed(SDL_SCANCODE_E)) {
+            swbf::effects::sparks(g_app.particles,
+                                   g_app.camera.x(),
+                                   g_app.camera.y() - 3.0f,
+                                   g_app.camera.z() - 10.0f,
+                                   0.0f, 1.0f, 0.0f);
+            LOG_INFO("Particle demo: sparks spawned");
+        }
+        if (g_app.input.key_pressed(SDL_SCANCODE_M)) {
+            swbf::effects::muzzle_flash(g_app.particles,
+                                         g_app.camera.x(),
+                                         g_app.camera.y(),
+                                         g_app.camera.z() - 2.0f,
+                                         0.0f, 0.0f, -1.0f);
+            LOG_INFO("Particle demo: muzzle flash spawned");
+        }
     }
 
     // -- Window resize ----------------------------------------------------
@@ -1382,20 +1458,75 @@ static void frame_tick() {
                   1.0f, 1.0f, 1.0f, alpha, 2.0f, screen_w, screen_h);
     }
 
+    // -- Player HUD (crosshair, health, ammo) when in player mode ----------
+    if (g_app.player_mode && g_app.player.is_alive()) {
+        // Crosshair — small cross at screen center.
+        float cx = static_cast<float>(screen_w) * 0.5f;
+        float cy = static_cast<float>(screen_h) * 0.5f;
+        draw_text("+", cx - 3.0f, cy - 5.0f,
+                  1.0f, 1.0f, 1.0f, 0.8f, 2.0f, screen_w, screen_h);
+
+        // Health bar (bottom left).
+        char hp_buf[64];
+        float hp = g_app.health.get_health(g_app.player.entity_id());
+        float max_hp = g_app.health.get_max_health(g_app.player.entity_id());
+        if (hp < 0.0f) hp = 0.0f;
+        std::snprintf(hp_buf, sizeof(hp_buf), "HP: %.0f/%.0f",
+                      static_cast<double>(hp), static_cast<double>(max_hp));
+        float hp_y = static_cast<float>(screen_h) - 30.0f;
+        draw_text(hp_buf, 12.0f, hp_y + 2.0f,
+                  0.0f, 0.0f, 0.0f, 0.6f, 2.0f, screen_w, screen_h);
+        draw_text(hp_buf, 10.0f, hp_y,
+                  0.2f, 1.0f, 0.3f, 0.9f, 2.0f, screen_w, screen_h);
+
+        // Ammo counter (bottom right).
+        char ammo_buf[64];
+        std::snprintf(ammo_buf, sizeof(ammo_buf), "%s  %d/%d",
+                      g_app.weapon.weapon_name().c_str(),
+                      g_app.weapon.ammo(), g_app.weapon.max_ammo());
+        float ammo_x = static_cast<float>(screen_w) - 250.0f;
+        draw_text(ammo_buf, ammo_x + 2.0f, hp_y + 2.0f,
+                  0.0f, 0.0f, 0.0f, 0.6f, 2.0f, screen_w, screen_h);
+        draw_text(ammo_buf, ammo_x, hp_y,
+                  1.0f, 0.9f, 0.3f, 0.9f, 2.0f, screen_w, screen_h);
+
+        // Camera mode indicator.
+        const char* cam_label = g_app.player.camera_mode() == swbf::CameraMode::FirstPerson
+            ? "1st Person" : "3rd Person";
+        float cam_x = static_cast<float>(screen_w) - 140.0f;
+        draw_text(cam_label, cam_x, 10.0f,
+                  0.7f, 0.7f, 0.7f, 0.6f, 2.0f, screen_w, screen_h);
+    }
+
+    // Show death message.
+    if (g_app.player_mode && !g_app.player.is_alive()) {
+        const char* dead_msg = "YOU WERE DEFEATED";
+        float dx_pos = static_cast<float>(screen_w) * 0.5f - 100.0f;
+        float dy_pos = static_cast<float>(screen_h) * 0.5f - 10.0f;
+        draw_text(dead_msg, dx_pos + 2.0f, dy_pos + 2.0f,
+                  0.0f, 0.0f, 0.0f, 0.7f, 3.0f, screen_w, screen_h);
+        draw_text(dead_msg, dx_pos, dy_pos,
+                  1.0f, 0.2f, 0.2f, 0.95f, 3.0f, screen_w, screen_h);
+    }
+
     // Full help overlay when F1 is toggled on.
     if (g_app.show_help) {
         const char* help_text =
             "OpenSWBF Controls\n"
             "\n"
-            "WASD       Move camera\n"
+            "WASD       Move / strafe\n"
             "Mouse      Look around (click to capture)\n"
-            "Space      Move up\n"
-            "Shift      Move down\n"
-            "Ctrl       Move faster\n"
+            "Space      Jump\n"
+            "Shift      Sprint\n"
+            "Ctrl       Crouch\n"
+            "LClick     Fire weapon\n"
+            "V          Toggle 1st/3rd person\n"
             "Escape     Release mouse\n"
+            "R          Reload\n"
             "F1         Toggle this help\n"
+            "F2         Toggle player / free-fly\n"
             "\n"
-            "Particle Effects\n"
+            "Particle Effects (free-fly only)\n"
             "P          Spawn explosion\n"
             "E          Spawn sparks\n"
             "M          Muzzle flash\n";
@@ -1445,11 +1576,8 @@ static void frame_tick() {
         g_app.fps_timer_ms = now_tick;
     }
 
-    // -- Update audio listener to match camera ----------------------------
-    if (g_app.audio.is_initialized()) {
-        g_app.audio.set_listener_position(
-            g_app.camera.x(), g_app.camera.y(), g_app.camera.z());
-    }
+    // -- Update audio (listener, deferred init, footsteps, etc.) ----------
+    g_app.game_audio.update(dt, g_app.camera, g_app.input);
 }
 
 
@@ -1526,8 +1654,9 @@ static bool load_lvl_assets(const std::string& data_dir) {
         {"ren/ren1.lvl",      "Rhen Var: Harbor"},
     };
 
-    // Collect all loaded textures across files so models can reference them.
+    // Collect all loaded textures and world instances across files.
     std::vector<swbf::Texture> all_textures;
+    std::vector<swbf::WorldInstance> all_instances;
 
     int files_loaded = 0;
 
@@ -1543,10 +1672,12 @@ static bool load_lvl_assets(const std::string& data_dir) {
                 LOG_INFO("Loading %s: %s", entry.description, path.c_str());
                 swbf::LVLLoader loader;
                 if (loader.load(path, vfs)) {
-                    LOG_INFO("  Loaded: %zu textures, %zu models, %zu terrains",
+                    LOG_INFO("  Loaded: %zu textures, %zu models, %zu terrains, "
+                             "%zu worlds",
                              loader.textures().size(),
                              loader.models().size(),
-                             loader.terrains().size());
+                             loader.terrains().size(),
+                             loader.worlds().size());
 
                     g_app.loaded_textures += static_cast<int>(loader.textures().size());
                     g_app.loaded_models   += static_cast<int>(loader.models().size());
@@ -1557,6 +1688,11 @@ static bool load_lvl_assets(const std::string& data_dir) {
                         all_textures.push_back(tex);
                     }
 
+                    // Accumulate world instances for model placement.
+                    auto instances = loader.all_instances();
+                    all_instances.insert(all_instances.end(),
+                                         instances.begin(), instances.end());
+
                     // Upload terrain if found and not yet uploaded.
                     if (!loader.terrains().empty() && g_terrain_vao == 0) {
                         const auto& td = loader.terrains()[0];
@@ -1566,15 +1702,33 @@ static bool load_lvl_assets(const std::string& data_dir) {
                         }
                     }
 
-                    // Upload models.
+                    // Upload models with world instance transforms.
                     for (const auto& model : loader.models()) {
                         if (model.segments.empty()) continue;
-                        LvlGPUModel gpu = upload_lvl_model(model, all_textures);
-                        if (!gpu.segments.empty()) {
-                            LOG_INFO("  Model uploaded: %s (%zu segments)",
-                                     model.name.c_str(), gpu.segments.size());
-                            g_app.gpu_models.push_back(std::move(gpu));
+
+                        bool placed = false;
+                        for (const auto& inst : all_instances) {
+                            if (inst.class_name == model.name) {
+                                LvlGPUModel gpu = upload_lvl_model(model, all_textures);
+                                if (!gpu.segments.empty()) {
+                                    inst.transform.to_mat4(gpu.world_transform);
+                                    g_app.gpu_models.push_back(std::move(gpu));
+                                    placed = true;
+                                }
+                            }
                         }
+
+                        if (!placed) {
+                            LvlGPUModel gpu = upload_lvl_model(model, all_textures);
+                            if (!gpu.segments.empty()) {
+                                g_app.gpu_models.push_back(std::move(gpu));
+                            }
+                        }
+                    }
+
+                    // Register sounds with the audio system.
+                    for (const auto& snd : loader.sounds()) {
+                        g_app.game_audio.register_lvl_sound(snd);
                     }
 
                     files_loaded++;
@@ -1662,21 +1816,45 @@ void load_lvl_data(const uint8_t* data, int size, const char* filename) {
     }
     g_app.loaded_textures += static_cast<int>(loader.textures().size());
 
-    // --- Models: upload to GPU ---------------------------------------------
+    // --- World instances: accumulate for model placement --------------------
+    static std::vector<swbf::WorldInstance> s_all_instances;
+    auto instances = loader.all_instances();
+    s_all_instances.insert(s_all_instances.end(),
+                           instances.begin(), instances.end());
+
+    // --- Models: upload to GPU with world instance transforms ---------------
     for (const auto& model : loader.models()) {
         if (model.segments.empty()) continue;
-        LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
-        if (!gpu.segments.empty()) {
-            LOG_INFO("load_lvl_data: model uploaded '%s' (%zu segments)",
-                     model.name.c_str(), gpu.segments.size());
-            g_app.gpu_models.push_back(std::move(gpu));
+
+        bool placed = false;
+        for (const auto& inst : s_all_instances) {
+            if (inst.class_name == model.name) {
+                LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+                if (!gpu.segments.empty()) {
+                    inst.transform.to_mat4(gpu.world_transform);
+                    g_app.gpu_models.push_back(std::move(gpu));
+                    placed = true;
+                }
+            }
+        }
+
+        if (!placed) {
+            LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+            if (!gpu.segments.empty()) {
+                g_app.gpu_models.push_back(std::move(gpu));
+            }
         }
     }
     g_app.loaded_models += static_cast<int>(loader.models().size());
 
+    // --- Sounds: register with audio system --------------------------------
+    for (const auto& snd : loader.sounds()) {
+        g_app.game_audio.register_lvl_sound(snd);
+    }
+
     // Mark that we are now showing LVL assets.
     if (!loader.textures().empty() || !loader.models().empty() ||
-        !loader.terrains().empty()) {
+        !loader.terrains().empty() || !loader.worlds().empty()) {
         g_app.using_lvl_assets = true;
     }
 
@@ -1717,8 +1895,9 @@ void load_lvl_file(const char* common_path, const char* map_path) {
         }
     }
 
-    // Persistent texture collection across loads for material lookups.
+    // Persistent collections across loads.
     static std::vector<swbf::Texture> s_all_textures;
+    static std::vector<swbf::WorldInstance> s_file_instances;
 
     // Parse common.lvl first (if provided and non-empty path).
     if (common_path && common_path[0] != '\0') {
@@ -1726,14 +1905,20 @@ void load_lvl_file(const char* common_path, const char* map_path) {
         if (!common_data.empty()) {
             swbf::LVLLoader common_loader;
             if (common_loader.load(common_data)) {
-                LOG_INFO("load_lvl_file: common.lvl parsed: %zu textures, %zu models",
+                LOG_INFO("load_lvl_file: common.lvl parsed: %zu textures, %zu models, "
+                         "%zu worlds",
                          common_loader.textures().size(),
-                         common_loader.models().size());
+                         common_loader.models().size(),
+                         common_loader.worlds().size());
 
                 for (const auto& tex : common_loader.textures()) {
                     s_all_textures.push_back(tex);
                 }
                 g_app.loaded_textures += static_cast<int>(common_loader.textures().size());
+
+                auto instances = common_loader.all_instances();
+                s_file_instances.insert(s_file_instances.end(),
+                                        instances.begin(), instances.end());
 
                 for (const auto& model : common_loader.models()) {
                     if (model.segments.empty()) continue;
@@ -1743,6 +1928,11 @@ void load_lvl_file(const char* common_path, const char* map_path) {
                     }
                 }
                 g_app.loaded_models += static_cast<int>(common_loader.models().size());
+
+                // Register sounds from common.lvl.
+                for (const auto& snd : common_loader.sounds()) {
+                    g_app.game_audio.register_lvl_sound(snd);
+                }
             } else {
                 LOG_WARN("load_lvl_file: failed to parse common.lvl");
             }
@@ -1759,10 +1949,12 @@ void load_lvl_file(const char* common_path, const char* map_path) {
                          "(partial data may still be available)", map_path);
             }
 
-            LOG_INFO("load_lvl_file: map parsed: %zu textures, %zu models, %zu terrains",
+            LOG_INFO("load_lvl_file: map parsed: %zu textures, %zu models, "
+                     "%zu terrains, %zu worlds",
                      loader.textures().size(),
                      loader.models().size(),
-                     loader.terrains().size());
+                     loader.terrains().size(),
+                     loader.worlds().size());
 
             // Terrain: replace current terrain with LVL terrain data.
             if (!loader.terrains().empty()) {
@@ -1788,17 +1980,40 @@ void load_lvl_file(const char* common_path, const char* map_path) {
             }
             g_app.loaded_textures += static_cast<int>(loader.textures().size());
 
-            // Models: upload to GPU.
+            // World instances from the map file.
+            auto instances = loader.all_instances();
+            s_file_instances.insert(s_file_instances.end(),
+                                    instances.begin(), instances.end());
+
+            // Models: upload to GPU with world instance transforms.
             for (const auto& model : loader.models()) {
                 if (model.segments.empty()) continue;
-                LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
-                if (!gpu.segments.empty()) {
-                    LOG_INFO("load_lvl_file: model '%s' uploaded (%zu segments)",
-                             model.name.c_str(), gpu.segments.size());
-                    g_app.gpu_models.push_back(std::move(gpu));
+
+                bool placed = false;
+                for (const auto& inst : s_file_instances) {
+                    if (inst.class_name == model.name) {
+                        LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+                        if (!gpu.segments.empty()) {
+                            inst.transform.to_mat4(gpu.world_transform);
+                            g_app.gpu_models.push_back(std::move(gpu));
+                            placed = true;
+                        }
+                    }
+                }
+
+                if (!placed) {
+                    LvlGPUModel gpu = upload_lvl_model(model, s_all_textures);
+                    if (!gpu.segments.empty()) {
+                        g_app.gpu_models.push_back(std::move(gpu));
+                    }
                 }
             }
             g_app.loaded_models += static_cast<int>(loader.models().size());
+
+            // Register sounds from map .lvl.
+            for (const auto& snd : loader.sounds()) {
+                g_app.game_audio.register_lvl_sound(snd);
+            }
         } else {
             LOG_ERROR("load_lvl_file: could not read map file '%s'", map_path);
         }
@@ -1853,9 +2068,16 @@ int main(int argc, char* argv[]) {
     g_app.input.init();
 
     // -- Audio (non-fatal if it fails) ------------------------------------
+    // On Emscripten, we defer OpenAL initialization until the first user
+    // interaction to avoid the browser autoplay-policy hang.  GameAudio
+    // handles that automatically.
+#ifndef __EMSCRIPTEN__
     if (!g_app.audio.init()) {
         LOG_WARN("Audio initialisation failed — continuing without sound.");
     }
+#else
+    LOG_INFO("Audio: deferring OpenAL init until first user interaction (Emscripten).");
+#endif
 
     // -- Camera -----------------------------------------------------------
     g_app.camera.set_position(0.0f, 15.0f, 40.0f);
@@ -1876,9 +2098,14 @@ int main(int argc, char* argv[]) {
     }
 
     // -- Audio manager (high-level) ----------------------------------------
+#ifndef __EMSCRIPTEN__
     if (!g_app.audio_mgr.init()) {
         LOG_WARN("AudioManager init failed — continuing without managed audio.");
     }
+#endif
+
+    // -- Game audio integration -------------------------------------------
+    g_app.game_audio.set_audio_manager(&g_app.audio_mgr);
 
     // -- Game systems init ------------------------------------------------
     g_app.entity_manager.init();
@@ -1898,6 +2125,7 @@ int main(int argc, char* argv[]) {
         sys.weapon_system       = &g_app.weapon;
         sys.ai_system           = &g_app.ai_system;
         sys.audio_device        = &g_app.audio;
+        sys.audio_manager       = &g_app.audio_mgr;
         sys.camera              = &g_app.camera;
         sys.vfs                 = &g_app.vfs;
     }
@@ -1959,13 +2187,53 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // -- Upload terrain heights to physics world ----------------------------
+    {
+        // Generate the same procedural terrain heights the renderer uses so
+        // the player can be grounded on them.  The origin offset tells the
+        // physics world that grid column 0 maps to world x = -HALF.
+        constexpr int PHYS_GRID = 128;
+        constexpr float PHYS_SCALE = 2.0f;
+        constexpr float PHYS_HALF = (PHYS_GRID - 1) * PHYS_SCALE * 0.5f;
+
+        std::vector<float> phys_heights(PHYS_GRID * PHYS_GRID);
+        for (int row = 0; row < PHYS_GRID; ++row) {
+            for (int col = 0; col < PHYS_GRID; ++col) {
+                float wx = static_cast<float>(col) * PHYS_SCALE - PHYS_HALF;
+                float wz = static_cast<float>(row) * PHYS_SCALE - PHYS_HALF;
+                phys_heights[static_cast<size_t>(row * PHYS_GRID + col)] =
+                    terrain_height(wx, wz);
+            }
+        }
+
+        g_app.physics.set_terrain_heights(phys_heights.data(), PHYS_GRID, PHYS_SCALE,
+                                          -PHYS_HALF, -PHYS_HALF);
+    }
+
+    g_app.physics.init();
+
+    // -- Add a default spawn point so respawning works --------------------
+    g_app.spawn_system.add_spawn_point("default", 0.0f, 0.0f, 0.0f, /*owner=*/1);
+
+    // -- Initialize player controller ------------------------------------
+    g_app.player.init(g_app.entity_manager, g_app.health, g_app.physics,
+                      0.0f, 10.0f, 10.0f);
+
     if (g_app.using_lvl_assets) {
         LOG_INFO("OpenSWBF ready (LVL assets loaded).  "
-                 "WASD to move, mouse to look, F1 for help.");
+                 "WASD to move, click to shoot, F1 for help.");
     } else {
         LOG_INFO("OpenSWBF ready (procedural demo).  "
-                 "WASD to move, mouse to look, F1 for help.");
+                 "WASD to move, click to shoot, F1 for help.");
     }
+
+    // -- Start ambient and music on native (Emscripten defers until click) -
+#ifndef __EMSCRIPTEN__
+    if (g_app.audio_mgr.is_initialized()) {
+        g_app.game_audio.start_ambient("ambient_wind");
+        g_app.game_audio.start_battle_music();
+    }
+#endif
 
     // -- Timing -----------------------------------------------------------
 #ifdef __EMSCRIPTEN__

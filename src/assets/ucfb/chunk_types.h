@@ -84,6 +84,7 @@ constexpr FourCC XFRM = make_fourcc('X', 'F', 'R', 'M');
 constexpr FourCC BASE = make_fourcc('B', 'A', 'S', 'E');
 constexpr FourCC TYPE = make_fourcc('T', 'Y', 'P', 'E');
 constexpr FourCC PROP = make_fourcc('P', 'R', 'O', 'P');
+constexpr FourCC VALU = make_fourcc('V', 'A', 'L', 'U');
 
 // PATH / shared sub-chunks
 constexpr FourCC INFO = make_fourcc('I', 'N', 'F', 'O');

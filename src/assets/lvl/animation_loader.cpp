@@ -207,8 +207,6 @@ SkeletonLoadResult AnimationLoader::load_skeleton_from_modl(
         }
     }
 
-    // Compute inverse bind matrices.
-    result.skeleton.compute_inverse_bind_matrices();
     result.valid = !result.skeleton.bones.empty();
 
     if (result.valid) {

@@ -15,6 +15,7 @@ void GameSystems::clear() {
     weapon_system       = nullptr;
     ai_system           = nullptr;
     audio_device        = nullptr;
+    audio_manager       = nullptr;
     camera              = nullptr;
     vfs                 = nullptr;
     config.clear();

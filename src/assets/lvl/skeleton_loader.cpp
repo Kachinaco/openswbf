@@ -26,28 +26,6 @@ constexpr FourCC BLN2 = make_fourcc('B', 'L', 'N', '2');
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
-// Skeleton accessors
-// ---------------------------------------------------------------------------
-
-int Skeleton::find_bone(uint32_t name_hash) const {
-    for (std::size_t i = 0; i < bones.size(); ++i) {
-        if (bones[i].name_hash == name_hash) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
-int Skeleton::find_bone(const std::string& name) const {
-    for (std::size_t i = 0; i < bones.size(); ++i) {
-        if (bones[i].name == name) {
-            return static_cast<int>(i);
-        }
-    }
-    return -1;
-}
-
-// ---------------------------------------------------------------------------
 // SkeletonLoader
 // ---------------------------------------------------------------------------
 
@@ -102,10 +80,10 @@ Skeleton SkeletonLoader::load(ChunkReader& chunk) {
             }
         }
         else if (id == BMAP) {
-            // Array of uint32 FNV name hashes, one per bone.
+            // Array of uint32 name hashes (CRC32), one per bone.
             for (uint32_t i = 0; i < bone_count; ++i) {
                 if (child.remaining() < 4) break;
-                skeleton.bones[i].name_hash = child.read<uint32_t>();
+                skeleton.bones[i].name_crc = child.read<uint32_t>();
             }
         }
         else if (id == BPAR) {
@@ -139,33 +117,33 @@ Skeleton SkeletonLoader::load(ChunkReader& chunk) {
 
                 if (bytes_per_bone == 40) {
                     // Scale (3 floats)
-                    skeleton.bones[i].scale[0] = child.read<float>();
-                    skeleton.bones[i].scale[1] = child.read<float>();
-                    skeleton.bones[i].scale[2] = child.read<float>();
+                    skeleton.bones[i].bind_scale[0] = child.read<float>();
+                    skeleton.bones[i].bind_scale[1] = child.read<float>();
+                    skeleton.bones[i].bind_scale[2] = child.read<float>();
                     // Rotation quaternion (4 floats: x,y,z,w)
-                    skeleton.bones[i].rotation[0] = child.read<float>();
-                    skeleton.bones[i].rotation[1] = child.read<float>();
-                    skeleton.bones[i].rotation[2] = child.read<float>();
-                    skeleton.bones[i].rotation[3] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[0] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[1] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[2] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[3] = child.read<float>();
                     // Position (3 floats)
-                    skeleton.bones[i].position[0] = child.read<float>();
-                    skeleton.bones[i].position[1] = child.read<float>();
-                    skeleton.bones[i].position[2] = child.read<float>();
+                    skeleton.bones[i].bind_position[0] = child.read<float>();
+                    skeleton.bones[i].bind_position[1] = child.read<float>();
+                    skeleton.bones[i].bind_position[2] = child.read<float>();
                 } else if (bytes_per_bone == 28) {
                     // Rotation quaternion (4 floats)
-                    skeleton.bones[i].rotation[0] = child.read<float>();
-                    skeleton.bones[i].rotation[1] = child.read<float>();
-                    skeleton.bones[i].rotation[2] = child.read<float>();
-                    skeleton.bones[i].rotation[3] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[0] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[1] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[2] = child.read<float>();
+                    skeleton.bones[i].bind_rotation[3] = child.read<float>();
                     // Position (3 floats)
-                    skeleton.bones[i].position[0] = child.read<float>();
-                    skeleton.bones[i].position[1] = child.read<float>();
-                    skeleton.bones[i].position[2] = child.read<float>();
+                    skeleton.bones[i].bind_position[0] = child.read<float>();
+                    skeleton.bones[i].bind_position[1] = child.read<float>();
+                    skeleton.bones[i].bind_position[2] = child.read<float>();
                 } else if (bytes_per_bone == 12) {
                     // Position only (3 floats)
-                    skeleton.bones[i].position[0] = child.read<float>();
-                    skeleton.bones[i].position[1] = child.read<float>();
-                    skeleton.bones[i].position[2] = child.read<float>();
+                    skeleton.bones[i].bind_position[0] = child.read<float>();
+                    skeleton.bones[i].bind_position[1] = child.read<float>();
+                    skeleton.bones[i].bind_position[2] = child.read<float>();
                 }
             }
         }
@@ -187,10 +165,22 @@ Skeleton SkeletonLoader::load(ChunkReader& chunk) {
                 uint32_t limit = std::min(skl2_count, bone_count);
                 for (uint32_t i = 0; i < limit; ++i) {
                     if (child.remaining() < 20) break;
-                    skeleton.bones[i].name_hash = child.read<uint32_t>();
+                    skeleton.bones[i].name_crc = child.read<uint32_t>();
                     child.skip(16); // type, constraint, length1, length2
                 }
             }
+        }
+    }
+
+    // Build the lookup maps (crc_to_index, name_to_index) now that all
+    // bone data has been populated.
+    for (std::size_t i = 0; i < skeleton.bones.size(); ++i) {
+        const auto& bone = skeleton.bones[i];
+        if (bone.name_crc != 0) {
+            skeleton.crc_to_index[bone.name_crc] = static_cast<int>(i);
+        }
+        if (!bone.name.empty()) {
+            skeleton.name_to_index[bone.name] = static_cast<int>(i);
         }
     }
 
