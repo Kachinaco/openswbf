@@ -44,9 +44,18 @@ constexpr FourCC PATH = make_fourcc('P', 'A', 'T', 'H');
 constexpr FourCC scr_ = make_fourcc('s', 'c', 'r', '_');
 constexpr FourCC Locl = make_fourcc('L', 'o', 'c', 'l');
 
-// Animation
+// Animation (top-level munged chunks in .lvl)
 constexpr FourCC zaa_ = make_fourcc('z', 'a', 'a', '_');
 constexpr FourCC zaf_ = make_fourcc('z', 'a', 'f', '_');
+
+// Animation sub-chunks (ANM2 hierarchy inside .msh / munged .lvl)
+constexpr FourCC ANM2 = make_fourcc('A', 'N', 'M', '2');
+constexpr FourCC CYCL = make_fourcc('C', 'Y', 'C', 'L');
+constexpr FourCC KFR3 = make_fourcc('K', 'F', 'R', '3');
+constexpr FourCC SKL2 = make_fourcc('S', 'K', 'L', '2');
+constexpr FourCC BLN2 = make_fourcc('B', 'L', 'N', '2');
+constexpr FourCC ENVL = make_fourcc('E', 'N', 'V', 'L');
+constexpr FourCC FRAM = make_fourcc('F', 'R', 'A', 'M');
 
 // Effects / sky / lighting
 constexpr FourCC fx__ = make_fourcc('f', 'x', '_', '_');
@@ -63,6 +72,22 @@ constexpr FourCC font = make_fourcc('f', 'o', 'n', 't');
 
 // Shaders
 constexpr FourCC SHDR = make_fourcc('S', 'H', 'D', 'R');
+
+// World instance sub-chunks
+constexpr FourCC inst = make_fourcc('i', 'n', 's', 't');
+
+// Skeleton sub-chunks
+constexpr FourCC BONE = make_fourcc('B', 'O', 'N', 'E');
+constexpr FourCC XFRM = make_fourcc('X', 'F', 'R', 'M');
+
+// Entity class sub-chunks
+constexpr FourCC BASE = make_fourcc('B', 'A', 'S', 'E');
+constexpr FourCC TYPE = make_fourcc('T', 'Y', 'P', 'E');
+constexpr FourCC PROP = make_fourcc('P', 'R', 'O', 'P');
+
+// PATH / shared sub-chunks
+constexpr FourCC INFO = make_fourcc('I', 'N', 'F', 'O');
+constexpr FourCC NODE = make_fourcc('N', 'O', 'D', 'E');
 
 // ---------------------------------------------------------------------------
 // MSH / MODL sub-chunks (model geometry, materials, skeleton data inside .lvl)
@@ -110,6 +135,25 @@ constexpr FourCC WGHT = make_fourcc('W', 'G', 'H', 'T');  // bone weights
 constexpr FourCC STRP = make_fourcc('S', 'T', 'R', 'P');  // triangle strips
 constexpr FourCC NDXL = make_fourcc('N', 'D', 'X', 'L');  // index list (optional)
 constexpr FourCC NDXT = make_fourcc('N', 'D', 'X', 'T');  // triangle index list
+
+// ---------------------------------------------------------------------------
+// Munged model format sub-chunks (soldier/vehicle models in side .lvl files)
+//
+// These use lowercase tags for container chunks (segm, shdw) and uppercase
+// for data chunks (IBUF, VBUF, TNAM, etc.).
+// ---------------------------------------------------------------------------
+
+constexpr FourCC segm = make_fourcc('s', 'e', 'g', 'm');  // geometry segment (munged)
+constexpr FourCC shdw = make_fourcc('s', 'h', 'd', 'w');  // shadow mesh (munged)
+constexpr FourCC IBUF = make_fourcc('I', 'B', 'U', 'F');  // index buffer
+constexpr FourCC VBUF = make_fourcc('V', 'B', 'U', 'F');  // vertex buffer
+constexpr FourCC TNAM = make_fourcc('T', 'N', 'A', 'M');  // texture name
+constexpr FourCC MNAM = make_fourcc('M', 'N', 'A', 'M');  // material name
+constexpr FourCC RTYP = make_fourcc('R', 'T', 'Y', 'P');  // render type
+constexpr FourCC SPHR = make_fourcc('S', 'P', 'H', 'R');  // bounding sphere
+constexpr FourCC SKIN = make_fourcc('S', 'K', 'I', 'N');  // bone weights (munged)
+constexpr FourCC BMAP = make_fourcc('B', 'M', 'A', 'P');  // bone mapping
+constexpr FourCC VDAT = make_fourcc('V', 'D', 'A', 'T');  // extra vertex data
 
 } // namespace chunk_id
 
